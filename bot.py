@@ -24,7 +24,8 @@ from aiohttp import web
 
 DEFAULT_BOT_TOKEN = "8788134150:AAFGBSSZlIaa0wMhZMgOx3_WeFPBILOR818"
 BOT_TOKEN = (os.getenv("BOT_TOKEN") or DEFAULT_BOT_TOKEN).strip()
-WEBAPP_URL = os.getenv("WEBAPP_URL", "").strip().rstrip("/")
+DEFAULT_WEBAPP_URL = "https://nft-production-6950.up.railway.app"
+WEBAPP_URL = (os.getenv("WEBAPP_URL") or DEFAULT_WEBAPP_URL).strip().rstrip("/")
 HOST = os.getenv("HOST", "0.0.0.0")
 PORT = int(os.getenv("PORT", "8080"))
 
@@ -303,12 +304,12 @@ def parse_nft_page(page: str) -> Dict[str, Any]:
             value = clean_text(cells[0][1])
             if value:
                 notes.append(value)
-                if owner["link"] is None and "gifted" in value.lower():
-                    profile = extract_profile(cells[0][1])
-                    if profile["link"]:
-                        owner["link"] = profile["link"]
-                        owner["username"] = profile["username"]
-                        owner["userId"] = profile["userId"]
+            if owner["link"] is None and "gifted" in value.lower():
+                profile = extract_profile(cells[0][1])
+                if profile["link"]:
+                    owner["link"] = profile["link"]
+                    owner["username"] = profile["username"]
+                    owner["userId"] = profile["userId"]
     issued = None
     for note in notes:
         found = DATE_RE.search(note)
@@ -386,7 +387,7 @@ def owner_display(owner: Dict[str, Any]) -> str:
         return "ID " + str(user_id)
     if name:
         return name
-    return "СЃРєСЂС‹С‚"
+    return "скрыт"
 
 
 def webapp_available() -> bool:
@@ -406,7 +407,7 @@ def app_inline_markup(slug: Optional[str] = None) -> Optional[InlineKeyboardMark
         inline_keyboard=[
             [
                 InlineKeyboardButton(
-                    text="рџЋЃ РћС‚РєСЂС‹С‚СЊ РєР°С‚Р°Р»РѕРі",
+                    text="🎁 Открыть каталог",
                     web_app=WebAppInfo(url=webapp_link(slug)),
                 )
             ]
@@ -418,7 +419,7 @@ def app_reply_markup() -> Optional[ReplyKeyboardMarkup]:
     if not webapp_available():
         return None
     return ReplyKeyboardMarkup(
-        keyboard=[[KeyboardButton(text="рџЋЃ РљР°С‚Р°Р»РѕРі РїРѕРґР°СЂРєРѕРІ", web_app=WebAppInfo(url=webapp_link()))]],
+        keyboard=[[KeyboardButton(text="🎁 Каталог подарков", web_app=WebAppInfo(url=webapp_link()))]],
         resize_keyboard=True,
         is_persistent=True,
     )
@@ -430,26 +431,26 @@ router = Router()
 @router.message(CommandStart())
 async def on_start(message: Message) -> None:
     text = (
-        "рџЋЃ <b>Gift Changes Explorer</b>\n\n"
-        "РљР°С‚Р°Р»РѕРі РІСЃРµС… РїРѕРґР°СЂРєРѕРІ Telegram РІ РЅРµРїСЂРѕРєР°С‡Р°РЅРЅРѕРј РІРёРґРµ: РѕСЂРёРіРёРЅР°Р»СЊРЅР°СЏ РёРєРѕРЅРєР°, ID, "
-        "РјРѕРґРµР»Рё, С„РѕРЅС‹ Рё СѓР·РѕСЂС‹. РћС‚РєСЂРѕР№ РјРёРЅРё-РїСЂРёР»РѕР¶РµРЅРёРµ, РЅР°Р№РґРё РїРѕРґР°СЂРѕРє РІ СЃРїРёСЃРєРµ Рё СѓРєР°Р¶Рё РЅРѕРјРµСЂ "
-        "РєРѕР»Р»РµРєС†РёРѕРЅРЅРѕРіРѕ вЂ” СѓРІРёРґРёС€СЊ РґР°С‚Сѓ РІС‹РїСѓСЃРєР°, С‚РёСЂР°Р¶ Рё РІР»Р°РґРµР»СЊС†Р° СЃ РїРµСЂРµС…РѕРґРѕРј РІ РїСЂРѕС„РёР»СЊ.\n\n"
-        "<b>РљРѕРјР°РЅРґС‹</b>\n"
-        "/app вЂ” РѕС‚РєСЂС‹С‚СЊ РјРёРЅРё-РїСЂРёР»РѕР¶РµРЅРёРµ\n"
-        "/gifts вЂ” СЃС‚Р°С‚РёСЃС‚РёРєР° РєР°С‚Р°Р»РѕРіР°\n"
-        "/gift Scared Cat вЂ” РєР°СЂС‚РѕС‡РєР° РїРѕРґР°СЂРєР°\n"
-        "/nft scaredcat 1 вЂ” РІР»Р°РґРµР»РµС† РєРѕР»Р»РµРєС†РёРѕРЅРЅРѕРіРѕ\n"
-        "/about вЂ” РёСЃС‚РѕС‡РЅРёРє РґР°РЅРЅС‹С…\n\n"
+        "🎁 <b>Gift Changes Explorer</b>\n\n"
+        "Каталог всех подарков Telegram в непрокачанном виде: оригинальная иконка, ID, "
+        "модели, фоны и узоры. Открой мини-приложение, найди подарок в списке и укажи номер "
+        "коллекционного — увидишь дату выпуска, тираж и владельца с переходом в профиль.\n\n"
+        "<b>Команды</b>\n"
+        "/app — открыть мини-приложение\n"
+        "/gifts — статистика каталога\n"
+        "/gift Scared Cat — карточка подарка\n"
+        "/nft scaredcat 1 — владелец коллекционного\n"
+        "/about — источник данных\n\n"
         "<i>" + escape(CREDIT) + "</i>"
     )
     if not webapp_available():
-        text += "\n\nвљ пёЏ Р—Р°РґР°Р№ РїРµСЂРµРјРµРЅРЅСѓСЋ <code>WEBAPP_URL</code> (https), С‡С‚РѕР±С‹ РІРєР»СЋС‡РёС‚СЊ РєРЅРѕРїРєСѓ РїСЂРёР»РѕР¶РµРЅРёСЏ."
+        text += "\n\n⚠️ Задай переменную <code>WEBAPP_URL</code> (https), чтобы включить кнопку приложения."
     reply_markup = app_reply_markup()
     if reply_markup is not None:
         await message.answer(text, reply_markup=reply_markup)
         markup = app_inline_markup()
         if markup is not None:
-            await message.answer("РљР°С‚Р°Р»РѕРі РѕС‚РєСЂС‹РІР°РµС‚СЃСЏ Р·РґРµСЃСЊ рџ‘‡", reply_markup=markup)
+            await message.answer("Каталог открывается здесь 👇", reply_markup=markup)
         return
     await message.answer(text)
 
@@ -458,16 +459,16 @@ async def on_start(message: Message) -> None:
 async def on_app(message: Message) -> None:
     markup = app_inline_markup()
     if markup is None:
-        await message.answer("WEBAPP_URL РЅРµ Р·Р°РґР°РЅ, РјРёРЅРё-РїСЂРёР»РѕР¶РµРЅРёРµ РЅРµРґРѕСЃС‚СѓРїРЅРѕ.")
+        await message.answer("WEBAPP_URL не задан, мини-приложение недоступно.")
         return
-    await message.answer("РљР°С‚Р°Р»РѕРі РЅРµРїСЂРѕРєР°С‡Р°РЅРЅС‹С… РїРѕРґР°СЂРєРѕРІ рџ‘‡", reply_markup=markup)
+    await message.answer("Каталог непрокачанных подарков 👇", reply_markup=markup)
 
 
 @router.message(Command("about"))
 async def on_about(message: Message) -> None:
     await message.answer(
-        "Р”Р°РЅРЅС‹Рµ Рѕ РїРѕРґР°СЂРєР°С…, РјРѕРґРµР»СЏС…, С„РѕРЅР°С… Рё СѓР·РѕСЂР°С…: <b>api.changes.tg</b>\n"
-        "Р’Р»Р°РґРµР»СЊС†С‹ Рё С‚РёСЂР°Р¶Рё РєРѕР»Р»РµРєС†РёРѕРЅРЅС‹С…: <b>t.me/nft</b> Рё <b>nft.fragment.com</b>\n\n"
+        "Данные о подарках, моделях, фонах и узорах: <b>api.changes.tg</b>\n"
+        "Владельцы и тиражи коллекционных: <b>t.me/nft</b> и <b>nft.fragment.com</b>\n\n"
         "<i>" + escape(CREDIT) + "</i>"
     )
 
@@ -477,20 +478,20 @@ async def on_gifts(message: Message) -> None:
     try:
         catalog = await get_catalog()
     except UpstreamError as error:
-        await message.answer("API РЅРµРґРѕСЃС‚СѓРїРµРЅ: " + escape(error.message))
+        await message.answer("API недоступен: " + escape(error.message))
         return
     totals = catalog.get("totals") or {}
     gifts_total = totals.get("gifts") or {}
     lines = [
-        "рџ“Љ <b>РљР°С‚Р°Р»РѕРі Gift Changes</b>",
-        "РџРѕРґР°СЂРєРѕРІ РІСЃРµРіРѕ: <b>" + str(gifts_total.get("total", "вЂ”")) + "</b>",
-        "РџСЂРѕРєР°С‡РёРІР°РµРјС‹С…: <b>" + str(gifts_total.get("upgradable", "вЂ”")) + "</b>",
-        "Р›РёРјРёС‚РёСЂРѕРІР°РЅРЅС‹С…: <b>" + str(gifts_total.get("limited", "вЂ”")) + "</b>",
-        "Р‘РµР·Р»РёРјРёС‚РЅС‹С…: <b>" + str(gifts_total.get("unlimited", "вЂ”")) + "</b>",
-        "РњРѕРґРµР»РµР№: <b>" + str(totals.get("models", "вЂ”")) + "</b>",
-        "Р¤РѕРЅРѕРІ: <b>" + str(totals.get("backdrops", "вЂ”")) + "</b>",
-        "РЈР·РѕСЂРѕРІ: <b>" + str(totals.get("patterns", "вЂ”")) + "</b>",
-        "Р’ РїСЂРёР»РѕР¶РµРЅРёРё РґРѕСЃС‚СѓРїРЅРѕ РєР°СЂС‚РѕС‡РµРє: <b>" + str(len(catalog.get("gifts") or [])) + "</b>",
+        "📊 <b>Каталог Gift Changes</b>",
+        "Подарков всего: <b>" + str(gifts_total.get("total", "—")) + "</b>",
+        "Прокачиваемых: <b>" + str(gifts_total.get("upgradable", "—")) + "</b>",
+        "Лимитированных: <b>" + str(gifts_total.get("limited", "—")) + "</b>",
+        "Безлимитных: <b>" + str(gifts_total.get("unlimited", "—")) + "</b>",
+        "Моделей: <b>" + str(totals.get("models", "—")) + "</b>",
+        "Фонов: <b>" + str(totals.get("backdrops", "—")) + "</b>",
+        "Узоров: <b>" + str(totals.get("patterns", "—")) + "</b>",
+        "В приложении доступно карточек: <b>" + str(len(catalog.get("gifts") or [])) + "</b>",
         "",
         "<i>" + escape(CREDIT) + "</i>",
     ]
@@ -502,28 +503,50 @@ async def send_gift_card(message: Message, query: str) -> None:
         data = await get_gift(query)
     except UpstreamError as error:
         if error.status == 404:
-            await message.answer("РџРѕРґР°СЂРѕРє РЅРµ РЅР°Р№РґРµРЅ. РџРѕРїСЂРѕР±СѓР№, РЅР°РїСЂРёРјРµСЂ: <code>/gift plush pepe</code>")
+            await message.answer("Подарок не найден. Попробуй, например: <code>/gift plush pepe</code>")
         else:
-            await message.answer("API РЅРµРґРѕСЃС‚СѓРїРµРЅ: " + escape(error.message))
+            await message.answer("API недоступен: " + escape(error.message))
         return
     counts = data["counts"]
     rarest = data["rarest"]
     lines = [
-        "рџЋЃ <b>" + escape(data["name"]) + "</b>",
-        "РЎРѕСЃС‚РѕСЏРЅРёРµ: <b>РЅРµРїСЂРѕРєР°С‡Р°РЅРЅС‹Р№ РѕСЂРёРіРёРЅР°Р»</b>",
-        "NFT-РІРµСЂСЃРёСЏ: <b>" + ("РµСЃС‚СЊ" if data["upgradable"] else "РЅРµС‚") + "</b>",
+        "🎁 <b>" + escape(data["name"]) + "</b>",
+        "Состояние: <b>непрокачанный оригинал</b>",
+        "NFT-версия: <b>" + ("есть" if data["upgradable"] else "нет") + "</b>",
         "",
-        "РњРѕРґРµР»РµР№: <b>" + str(counts["models"]) + "</b> В· Р¤РѕРЅРѕРІ: <b>" + str(counts["backdrops"]) + "</b> В· РЈР·РѕСЂРѕРІ: <b>" + str(counts["symbols"]) + "</b>",
+        "Моделей: <b>" + str(counts["models"]) + "</b> · Фонов: <b>" + str(counts["backdrops"]) + "</b> · Узоров: <b>" + str(counts["symbols"]) + "</b>",
     ]
     if rarest["model"]:
-        lines.append("Р РµРґС‡Р°Р№С€Р°СЏ РјРѕРґРµР»СЊ: <b>" + escape(str(rarest["model"])) + "</b>")
+        lines.append("Редчайшая модель: <b>" + escape(str(rarest["model"])) + "</b>")
     if rarest["backdrop"]:
-        lines.append("Р РµРґС‡Р°Р№С€РёР№ С„РѕРЅ: <b>" + escape(str(rarest["backdrop"])) + "</b>")
+        lines.append("Редчайший фон: <b>" + escape(str(rarest["backdrop"])) + "</b>")
     if rarest["symbol"]:
-        lines.append("Р РµРґС‡Р°Р№С€РёР№ СѓР·РѕСЂ: <b>" + escape(str(rarest["symbol"])) + "</b>")
+        lines.append("Редчайший узор: <b>" + escape(str(rarest["symbol"])) + "</b>")
     lines.append("")
     lines.append("Gift ID: <code>" + escape(data["id"]) + "</code>")
     if data["customEmojiId"]:
         lines.append("Custom emoji ID: <code>" + escape(data["customEmojiId"]) + "</code>")
-    lines.append("Р’Р»Р°РґРµР»РµС† СЌРєР·РµРјРїР»СЏСЂР°: <code>/nft " + escape(data["slug"]) + " 1</code>")
-    lines.
+    lines.append("Владелец экземпляра: <code>/nft " + escape(data["slug"]) + " 1</code>")
+    lines.append("")
+    lines.append("<i>" + escape(CREDIT) + "</i>")
+    caption = "\n".join(lines)
+    markup = app_inline_markup(data["slug"])
+    try:
+        await message.answer_photo(photo=data["iconLarge"], caption=caption, reply_markup=markup)
+    except Exception:
+        await message.answer(caption, reply_markup=markup)
+
+
+@router.message(Command("gift"))
+async def on_gift(message: Message, command: CommandObject) -> None:
+    query = (command.args or "").strip()
+    if not query:
+        await message.answer("Укажи название: <code>/gift scared cat</code>")
+        return
+    await send_gift_card(message, query)
+
+
+@router.message(Command("nft"))
+async def on_nft(message: Message, command: CommandObject) -> None:
+    raw = (command.args or "").strip()
+ 
