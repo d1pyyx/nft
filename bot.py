@@ -171,13 +171,15 @@ async def load_catalog() -> Dict[str, Any]:
     gifts: List[Dict[str, Any]] = []
     for index, (gift_id, name) in enumerate(dict(ids or {}).items()):
         slug = to_slug(name)
+        if slug not in upgradable_slugs:
+            continue
         gifts.append(
             {
                 "name": str(name),
                 "slug": slug,
                 "id": str(gift_id),
                 "order": index,
-                "upgradable": slug in upgradable_slugs,
+                "upgradable": True,
                 "icon": icon_url(gift_id, 256),
                 "iconLarge": icon_url(gift_id, 512),
                 "sticker": API_BASE + "/original/" + str(gift_id) + ".tgs",
@@ -433,9 +435,9 @@ router = Router()
 @router.message(CommandStart())
 async def on_start(message: Message) -> None:
     text = (
-        "Привет. Здесь все подарки Telegram в обычном виде — такие, какими их присылают, без прокачки.\n\n"
-        "Открой каталог: там список и поиск, тапни по подарку — увидишь его карточку. "
-        "Знаешь номер экземпляра — впиши его там же, и получишь дату выпуска, тираж и владельца.\n\n"
+        "Привет. Здесь нфт-подарки Telegram в непрокачанном виде — те, что можно прокачать. Обычные подарки без прокачки сюда не попадают.\n\n"
+        "Открой каталог и тапни по любому — сразу покажу инфу и владельца: юзернейм, а если его нет, то Telegram ID. "
+        "Нужен другой экземпляр — впиши номер в карточке.\n\n"
         "Можно и текстом:\n"
         "/app — каталог\n"
         "/gifts — сколько всего подарков\n"
@@ -483,7 +485,7 @@ async def on_gifts(message: Message) -> None:
         "Всего подарков: <b>" + str(gifts_total.get("total", "—")) + "</b>",
         "Лимитированных: <b>" + str(gifts_total.get("limited", "—")) + "</b>",
         "Безлимитных: <b>" + str(gifts_total.get("unlimited", "—")) + "</b>",
-        "В каталоге приложения: <b>" + str(len(catalog.get("gifts") or [])) + "</b>",
+        "Можно прокачать, они в каталоге: <b>" + str(len(catalog.get("gifts") or [])) + "</b>",
         "",
         "Моделей: <b>" + str(totals.get("models", "—")) + "</b>",
         "Фонов: <b>" + str(totals.get("backdrops", "—")) + "</b>",
@@ -504,7 +506,7 @@ async def send_gift_card(message: Message, query: str) -> None:
     rarest = data["rarest"]
     lines = [
         "<b>" + escape(data["name"]) + "</b>",
-        "Обычный вид, без прокачки.",
+        "Нфт-подарок, здесь в непрокачанном виде.",
         "",
         "ID: <code>" + escape(data["id"]) + "</code>",
     ]
@@ -742,11 +744,11 @@ function renderDetail(gift) {
   img.alt = '';
   hero.appendChild(img);
   hero.appendChild(el('h1', null, gift.name));
-  hero.appendChild(el('p', null, 'обычный вид, без прокачки'));
+  hero.appendChild(el('p', null, 'нфт-подарок, ещё не прокачан'));
   detailEl.appendChild(hero);
   detailEl.appendChild(kv('ID', gift.id));
   const ask = el('div', 'ask');
-  ask.appendChild(el('p', null, 'Знаешь номер экземпляра? Покажу, когда его выпустили и у кого он сейчас.'));
+  ask.appendChild(el('p', null, 'Показываю первый экземпляр. Нужен другой — впиши номер.'));
   const line = el('div');
   const input = el('input');
   input.id = 'num';
@@ -769,6 +771,8 @@ function renderDetail(gift) {
   input.addEventListener('keydown', function (event) {
     if (event.key === 'Enter') lookupNumber(input.value, box);
   });
+  input.value = '1';
+  lookupNumber('1', box);
 }
 
 async function openGift(slug) {
@@ -831,7 +835,7 @@ async function lookupNumber(value, box) {
     if (data.symbol) box.appendChild(kv('Узор', data.symbol));
   } catch (error) {
     box.className = 'msg';
-    box.textContent = 'Такого экземпляра нет или Telegram его не отдал.';
+    box.textContent = 'Этот экземпляр ещё не прокачан — страницы у него нет.';
   }
 }
 
