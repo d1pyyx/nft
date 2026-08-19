@@ -17,9 +17,7 @@ from aiogram.types import (
     BotCommand,
     InlineKeyboardButton,
     InlineKeyboardMarkup,
-    KeyboardButton,
     Message,
-    ReplyKeyboardMarkup,
     WebAppInfo,
 )
 from aiohttp import web
@@ -34,20 +32,12 @@ PORT = int(os.getenv("PORT", "8080"))
 API_BASE = "https://api.changes.tg"
 TELEGRAM_API = "https://api.telegram.org/bot" + BOT_TOKEN
 TME_NFT_BASE = "https://t.me/nft"
-FRAGMENT_BASE = "https://nft.fragment.com/gift"
 USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36"
-CREDIT = "Данные: api.changes.tg и t.me/nft, спасибо @GiftChanges"
-DEFAULT_BLOCKED = "mrktbank,mrkt,tonnel,tonnelnetwork,portals,portalsmarket,fragment,getgems,tonnelmarket"
-BLOCKED_OWNERS = {
-    part.strip().lower().lstrip("@")
-    for part in (os.getenv("BLOCKED_OWNERS") or DEFAULT_BLOCKED).split(",")
-    if part.strip()
-}
-PROBE_NUMBERS = [1, 2, 3, 4]
-FEED_SIZE = 20
+CREDIT = "Данные: api.changes.tg, спасибо @GiftChanges"
+FEED_SIZE = 16
+SORT_MODE = (os.getenv("SORT") or "left").strip().lower()
 CATALOG_TTL = 900
-INSTANCE_TTL = 300
-MAX_NUMBER = 5000000
+STATS_TTL = 300
 
 
 class UpstreamError(Exception):
@@ -117,6 +107,11 @@ async def fetch_text(url: str) -> Optional[str]:
 
 def to_slug(value: Any) -> str:
     return re.sub(r"[^a-z0-9]", "", str(value or "").lower())
+
+
+def to_int(value: Any) -> int:
+    digits = re.sub(r"[^0-9]", "", str(value or ""))
+    return int(digits) if digits else 0
 
 
 def icon_url(gift_id: Any, size: int) -> str:
@@ -197,151 +192,64 @@ async def find_gift(query: str) -> Optional[Dict[str, Any]]:
 TAG_RE = re.compile(r"<[^>]+>")
 ROW_RE = re.compile(r"<tr[^>]*>(.*?)</tr>", re.S | re.I)
 CELL_RE = re.compile(r"<t[dh][^>]*>(.*?)</t[dh]>", re.S | re.I)
-HREF_RE = re.compile(r"href=[\"']([^\"']+)[\"']", re.I)
-DATE_RE = re.compile(r"\bon\s+(\d{1,2})\s+([A-Za-z]+)\s+(\d{4})")
-USERNAME_RE = re.compile(r"t\.me/([A-Za-z0-9_]{4,32})")
-TGID_RE = re.compile(r"user\?id=(\d+)")
 QUANTITY_RE = re.compile(r"([\d\s,]+)/([\d\s,]+)")
-MONTHS = {
-    "january": "янв",
-    "february": "фев",
-    "march": "мар",
-    "april": "апр",
-    "may": "мая",
-    "june": "июн",
-    "july": "июл",
-    "august": "авг",
-    "september": "сен",
-    "october": "окт",
-    "november": "ноя",
-    "december": "дек",
-}
 
 
 def clean_text(value: str) -> str:
     return " ".join(unescape(TAG_RE.sub(" ", value or "")).replace("\xa0", " ").split())
 
 
-def format_date(page: str) -> str:
-    match = DATE_RE.search(page or "")
-    if not match:
-        return ""
-    day, month, year = match.group(1), match.group(2), match.group(3)
-    return day.lstrip("0") + " " + MONTHS.get(month.lower(), month.lower()) + " " + year
-
-
-def parse_rows(page: str) -> Dict[str, Dict[str, str]]:
-    rows: Dict[str, Dict[str, str]] = {}
+def parse_rows(page: str) -> Dict[str, str]:
+    rows: Dict[str, str] = {}
     for chunk in ROW_RE.findall(page or ""):
         cells = CELL_RE.findall(chunk)
         if len(cells) < 2:
             continue
         label = clean_text(cells[0]).lower()
-        if not label:
-            continue
-        link = HREF_RE.search(cells[1])
-        rows[label] = {
-            "value": clean_text(cells[1]),
-            "href": link.group(1) if link else "",
-        }
+        if label:
+            rows[label] = clean_text(cells[1])
     return rows
 
 
-def parse_owner(cell: Dict[str, str]) -> Dict[str, str]:
-    link = cell.get("href") or ""
-    name = cell.get("value") or ""
-    username = ""
-    user_id = ""
-    match = USERNAME_RE.search(link)
-    if match:
-        username = match.group(1)
-    match = TGID_RE.search(link)
-    if match:
-        user_id = match.group(1)
-    if not username and name.startswith("@"):
-        username = name[1:]
-    if username:
-        profile = "https://t.me/" + username
-    elif user_id:
-        profile = "tg://user?id=" + user_id
-    else:
-        profile = ""
-    return {
-        "name": name,
-        "username": username,
-        "userId": user_id,
-        "link": profile,
-    }
-
-
-def owner_ok(owner: Dict[str, str]) -> bool:
-    username = str(owner.get("username") or "").lower()
-    if not username:
-        return False
-    if username in BLOCKED_OWNERS:
-        return False
-    if username.endswith("bot") or username.endswith("bank"):
-        return False
-    return True
-
-
-async def load_instance(slug: str, number: int) -> Optional[Dict[str, Any]]:
-    page = await fetch_text(TME_NFT_BASE + "/" + slug + "-" + str(number))
+async def load_stats(slug: str) -> Dict[str, int]:
+    page = await fetch_text(TME_NFT_BASE + "/" + slug + "-1")
     if not page:
-        return None
-    rows = parse_rows(page)
-    owner = parse_owner(rows.get("owner") or {})
-    quantity = (rows.get("quantity") or {}).get("value") or ""
-    issued = ""
-    total = ""
-    match = QUANTITY_RE.search(quantity)
-    if match:
-        issued = " ".join(match.group(1).replace(",", " ").split())
-        total = " ".join(match.group(2).replace(",", " ").split())
-    base = FRAGMENT_BASE + "/" + slug + "-" + str(number)
-    return {
-        "slug": slug,
-        "number": number,
-        "owner": owner,
-        "thumb": base + ".webp",
-        "image": base + ".large.jpg",
-        "model": (rows.get("model") or {}).get("value") or "",
-        "backdrop": (rows.get("backdrop") or {}).get("value") or "",
-        "symbol": (rows.get("symbol") or {}).get("value") or "",
-        "date": format_date(page),
-        "issued": issued,
-        "issuedTotal": total,
-        "pageUrl": TME_NFT_BASE + "/" + slug + "-" + str(number),
-    }
+        return {"upgraded": 0, "supply": 0}
+    match = QUANTITY_RE.search(parse_rows(page).get("quantity") or "")
+    if not match:
+        return {"upgraded": 0, "supply": 0}
+    return {"upgraded": to_int(match.group(1)), "supply": to_int(match.group(2))}
 
 
-async def get_instance(slug: str, number: int) -> Optional[Dict[str, Any]]:
-    async def loader() -> Optional[Dict[str, Any]]:
+async def get_stats(slug: str) -> Dict[str, int]:
+    async def loader() -> Dict[str, int]:
         try:
-            return await load_instance(slug, number)
+            return await load_stats(slug)
         except Exception:
-            return None
+            return {"upgraded": 0, "supply": 0}
 
-    return await CACHE.get("nft:" + slug + ":" + str(number), INSTANCE_TTL, loader)
-
-
-async def pick_instance(slug: str) -> Optional[Dict[str, Any]]:
-    found = await asyncio.gather(*[get_instance(slug, number) for number in PROBE_NUMBERS])
-    for item in found:
-        if item is not None and owner_ok(item["owner"]):
-            return item
-    return None
+    return await CACHE.get("stats:" + slug, STATS_TTL, loader)
 
 
-def feed_card(gift: Dict[str, Any], instance: Dict[str, Any]) -> Dict[str, Any]:
+def supply_of(gift: Dict[str, Any], stats: Dict[str, int]) -> int:
+    return int(stats.get("supply") or gift.get("total") or 0)
+
+
+def left_of(gift: Dict[str, Any], stats: Dict[str, int]) -> int:
+    supply = supply_of(gift, stats)
+    if not supply:
+        return 0
+    return max(0, supply - int(stats.get("upgraded") or 0))
+
+
+def feed_card(gift: Dict[str, Any], stats: Dict[str, int]) -> Dict[str, Any]:
     return {
         "slug": gift["slug"],
         "name": gift["name"],
-        "icon": instance.get("thumb") or gift["icon"],
-        "full": instance.get("image") or gift["icon"],
-        "number": instance["number"],
-        "owner": instance["owner"]["username"],
+        "icon": gift["icon"],
         "stars": gift["stars"],
+        "left": left_of(gift, stats),
+        "supply": supply_of(gift, stats),
     }
 
 
@@ -349,18 +257,24 @@ async def load_feed(page: int) -> Dict[str, Any]:
     gifts = await get_catalog()
     start = max(0, (page - 1) * FEED_SIZE)
     window = gifts[start : start + FEED_SIZE]
-    limiter = asyncio.Semaphore(5)
+    limiter = asyncio.Semaphore(6)
 
     async def one(gift: Dict[str, Any]) -> Optional[Dict[str, Any]]:
         async with limiter:
-            instance = await pick_instance(gift["slug"])
-        if instance is None:
+            stats = await get_stats(gift["slug"])
+        card = feed_card(gift, stats)
+        if card["supply"] and card["left"] <= 0:
             return None
-        return feed_card(gift, instance)
+        return card
 
     found = await asyncio.gather(*[one(gift) for gift in window])
+    items = [item for item in found if item is not None]
+    if SORT_MODE == "name":
+        items.sort(key=lambda item: item["name"].lower())
+    else:
+        items.sort(key=lambda item: (-item["left"], item["name"].lower()))
     return {
-        "items": [item for item in found if item is not None],
+        "items": items,
         "page": page,
         "hasMore": start + FEED_SIZE < len(gifts),
         "total": len(gifts),
@@ -368,54 +282,24 @@ async def load_feed(page: int) -> Dict[str, Any]:
 
 
 async def get_feed(page: int) -> Dict[str, Any]:
-    return await CACHE.get("feed:" + str(page), INSTANCE_TTL, lambda: load_feed(page))
+    return await CACHE.get("feed:" + str(page), STATS_TTL, lambda: load_feed(page))
 
 
-async def gift_payload(gift: Dict[str, Any], number: Optional[int]) -> Dict[str, Any]:
-    if number is None:
-        instance = await pick_instance(gift["slug"])
-    else:
-        instance = await get_instance(gift["slug"], number)
-    owner = (instance or {}).get("owner") or {}
+async def gift_payload(gift: Dict[str, Any]) -> Dict[str, Any]:
+    stats = await get_stats(gift["slug"])
     return {
         "slug": gift["slug"],
         "name": gift["name"],
-        "icon": (instance or {}).get("image") or gift["iconLarge"],
-        "model": (instance or {}).get("model") or "",
-        "backdrop": (instance or {}).get("backdrop") or "",
-        "symbol": (instance or {}).get("symbol") or "",
+        "icon": gift["iconLarge"],
         "stars": gift["stars"],
         "upgradeStars": gift["upgradeStars"],
         "total": gift["total"],
         "remaining": gift["remaining"],
         "onSale": gift["onSale"],
-        "number": (instance or {}).get("number"),
-        "owner": owner.get("username") or "",
-        "ownerLink": owner.get("link") or "",
-        "date": (instance or {}).get("date") or "",
-        "issued": (instance or {}).get("issued") or "",
-        "issuedTotal": (instance or {}).get("issuedTotal") or "",
-        "pageUrl": (instance or {}).get("pageUrl") or "",
-        "visible": bool(owner.get("username")) and owner_ok(owner),
+        "left": left_of(gift, stats),
+        "supply": supply_of(gift, stats),
+        "upgraded": int(stats.get("upgraded") or 0),
     }
-
-
-async def load_owners(slug: str, start: int, count: int) -> List[Dict[str, Any]]:
-    first = max(1, min(MAX_NUMBER, start))
-    numbers = list(range(first, first + max(1, min(24, count))))
-    found = await asyncio.gather(*[get_instance(slug, number) for number in numbers])
-    items: List[Dict[str, Any]] = []
-    for item in found:
-        if item is None or not owner_ok(item["owner"]):
-            continue
-        items.append(
-            {
-                "number": item["number"],
-                "owner": item["owner"]["username"],
-                "link": item["owner"]["link"],
-            }
-        )
-    return items
 
 
 def json_response(payload: Any, status: int = 200) -> web.Response:
@@ -446,27 +330,12 @@ async def handle_gift(request: web.Request) -> web.Response:
     gift = await find_gift(request.match_info.get("slug", ""))
     if gift is None:
         return json_response({"error": "not found"}, 404)
-    raw = re.sub(r"[^0-9]", "", request.query.get("number", ""))
-    number = int(raw) if raw and 0 < int(raw) <= MAX_NUMBER else None
     try:
-        return json_response(await gift_payload(gift, number))
+        return json_response(await gift_payload(gift))
     except UpstreamError as error:
         return json_response({"error": error.message}, 502)
     except Exception:
         return json_response({"error": "failed"}, 502)
-
-
-async def handle_owners(request: web.Request) -> web.Response:
-    gift = await find_gift(request.match_info.get("slug", ""))
-    if gift is None:
-        return json_response({"error": "not found"}, 404)
-    raw = re.sub(r"[^0-9]", "", request.query.get("from", "1")) or "1"
-    start = max(1, min(MAX_NUMBER, int(raw)))
-    try:
-        items = await load_owners(gift["slug"], start, 12)
-    except Exception:
-        return json_response({"error": "failed"}, 502)
-    return json_response({"items": items, "next": start + 12})
 
 
 async def handle_health(request: web.Request) -> web.Response:
@@ -478,10 +347,10 @@ MINI_APP_HTML = r'''<!doctype html>
 <head>
 <meta charset='utf-8'>
 <meta name='viewport' content='width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no'>
-<title>Подарки</title>
+<title>Неулучшенные подарки</title>
 <script src='https://telegram.org/js/telegram-web-app.js'></script>
 <style>
-:root{--bg:var(--tg-theme-bg-color,#17212b);--text:var(--tg-theme-text-color,#ffffff);--muted:var(--tg-theme-hint-color,#7d8b99);--card:var(--tg-theme-secondary-bg-color,#232e3c);--line:rgba(128,128,128,.2);--link:var(--tg-theme-link-color,#4aa8e8);--btn:var(--tg-theme-button-color,#2f80c2);--btntext:var(--tg-theme-button-text-color,#ffffff)}
+:root{--bg:var(--tg-theme-bg-color,#17212b);--text:var(--tg-theme-text-color,#ffffff);--muted:var(--tg-theme-hint-color,#7d8b99);--card:var(--tg-theme-secondary-bg-color,#232e3c);--line:rgba(128,128,128,.2);--link:var(--tg-theme-link-color,#4aa8e8)}
 *{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
 body{margin:0;background:var(--bg);color:var(--text);font:15px/1.4 -apple-system,BlinkMacSystemFont,Segoe UI,Roboto,sans-serif}
 .wrap{max-width:520px;margin:0 auto;padding:12px 12px 24px}
@@ -491,7 +360,7 @@ input{width:100%;padding:10px 12px;border:0;border-radius:10px;background:var(--
 .cell{background:var(--card);border-radius:14px;padding:12px 10px;text-align:center}
 .cell img{width:86px;height:86px;object-fit:contain;display:block;margin:0 auto 8px}
 .cell b{display:block;font-size:14px;font-weight:600}
-.cell u{display:block;margin-top:3px;color:var(--link);font-size:13px;text-decoration:none}
+.cell i{display:block;margin-top:4px;color:var(--muted);font-size:12px;font-style:normal}
 .more{width:100%;margin:12px 0 0;padding:11px;border:0;border-radius:12px;background:var(--card);color:var(--text);font-size:14px}
 .hide{display:none}
 .back{display:inline-block;padding:2px 0 6px;color:var(--link);font-size:15px}
@@ -501,13 +370,9 @@ input{width:100%;padding:10px 12px;border:0;border-radius:10px;background:var(--
 .card{background:var(--card);border-radius:12px;overflow:hidden}
 .kv{display:flex;gap:12px;padding:11px 14px;border-bottom:1px solid var(--line);font-size:14px}
 .kv:last-child{border-bottom:0}
-.kv i{flex:0 0 92px;font-style:normal;color:var(--muted)}
+.kv i{flex:0 0 112px;font-style:normal;color:var(--muted)}
 .kv span{flex:1}
-.kv a{color:var(--link);text-decoration:none}
-.btn{display:block;margin-top:14px;padding:13px;border:0;border-radius:12px;background:var(--btn);color:var(--btntext);font-size:15px;text-align:center;text-decoration:none}
-.sec{margin:16px 2px 8px;color:var(--muted);font-size:13px}
 .foot{margin:14px 2px 0;color:var(--muted);font-size:12px;text-align:center}
-.foot a{color:var(--link);text-decoration:none}
 </style>
 </head>
 <body>
@@ -517,6 +382,7 @@ input{width:100%;padding:10px 12px;border:0;border-radius:10px;background:var(--
 <div class='hint' id='count'>Загружаю</div>
 <div class='grid' id='grid'></div>
 <button class='more hide' id='more'>Показать ещё</button>
+<div class='foot'>Данные: api.changes.tg, спасибо @GiftChanges</div>
 </div>
 <div id='detailScreen' class='hide'>
 <a class='back' id='back'>Назад</a>
@@ -529,8 +395,6 @@ if (tg) { tg.ready(); tg.expand(); }
 var items = [];
 var page = 1;
 var loading = false;
-var ownerSlug = '';
-var ownerNext = 1;
 
 function el(tag, cls, text) {
   var node = document.createElement(tag);
@@ -558,26 +422,10 @@ function plural(n, one, few, many) {
   return many;
 }
 
-function openLink(link) {
-  if (!link) { return; }
-  if (tg && link.indexOf('https://t.me/') === 0) { tg.openTelegramLink(link); return; }
-  if (tg && link.indexOf('tg://') === 0) { tg.openLink(link); return; }
-  window.open(link, '_blank');
-}
-
-function kv(label, value, link) {
+function kv(label, value) {
   var row = el('div', 'kv');
   row.appendChild(el('i', null, label));
-  if (link) {
-    var box = el('span');
-    var a = el('a', null, value);
-    a.href = '#';
-    a.onclick = function (event) { event.preventDefault(); openLink(link); };
-    box.appendChild(a);
-    row.appendChild(box);
-  } else {
-    row.appendChild(el('span', null, value));
-  }
+  row.appendChild(el('span', null, value));
   return row;
 }
 
@@ -600,7 +448,7 @@ function renderGrid() {
   grid.textContent = '';
   var shown = items.filter(function (item) {
     if (!needle) { return true; }
-    return item.name.toLowerCase().indexOf(needle) >= 0 || String(item.owner).toLowerCase().indexOf(needle) >= 0;
+    return item.name.toLowerCase().indexOf(needle) >= 0;
   });
   shown.forEach(function (item) {
     var cell = el('div', 'cell');
@@ -608,11 +456,10 @@ function renderGrid() {
     img.src = item.icon;
     img.alt = '';
     img.loading = 'lazy';
-    img.onerror = function () { if (item.full && img.src !== item.full) { img.src = item.full; } };
     cell.appendChild(img);
-    cell.appendChild(el('b', null, item.name + ' #' + fmt(item.number)));
-    cell.appendChild(el('u', null, '@' + item.owner));
-    cell.onclick = function () { openGift(item.slug, item.number); };
+    cell.appendChild(el('b', null, item.name));
+    cell.appendChild(el('i', null, item.left ? 'не улучшено ' + fmt(item.left) : 'без лимита'));
+    cell.onclick = function () { openGift(item.slug); };
     grid.appendChild(cell);
   });
   document.getElementById('count').textContent = shown.length
@@ -629,80 +476,33 @@ function renderDetail(data) {
   img.alt = '';
   hero.appendChild(img);
   box.appendChild(hero);
-  box.appendChild(el('div', 'title', data.name + (data.number ? ' #' + fmt(data.number) : '')));
+  box.appendChild(el('div', 'title', data.name));
   var card = el('div', 'card');
-  if (data.owner) {
-    card.appendChild(kv('Владелец', '@' + data.owner, data.ownerLink));
-  }
-  if (data.date) {
-    card.appendChild(kv('Дата', data.date));
-  }
-  if (data.model) {
-    card.appendChild(kv('Модель', data.model));
-  }
-  if (data.backdrop) {
-    card.appendChild(kv('Фон', data.backdrop));
-  }
-  if (data.symbol) {
-    card.appendChild(kv('Символ', data.symbol));
-  }
-  if (data.issuedTotal) {
-    card.appendChild(kv('Выпущено', data.issued + ' из ' + data.issuedTotal));
-  }
   if (data.stars !== null && data.stars !== undefined) {
-    card.appendChild(kv('Цена подарка', stars(data.stars)));
+    card.appendChild(kv('Стоимость', stars(data.stars)));
+  }
+  if (data.upgradeStars !== null && data.upgradeStars !== undefined) {
+    card.appendChild(kv('Улучшение', stars(data.upgradeStars)));
+  }
+  if (data.supply) {
+    card.appendChild(kv('Не улучшено', fmt(data.left) + ' из ' + fmt(data.supply)));
+    card.appendChild(kv('Уже улучшено', fmt(data.upgraded)));
+  }
+  if (data.total) {
+    card.appendChild(kv('В продаже', fmt(data.remaining || 0) + ' из ' + fmt(data.total)));
+  } else if (!data.onSale) {
+    card.appendChild(kv('В продаже', 'нет'));
   }
   box.appendChild(card);
-  ownerSlug = data.slug;
-  ownerNext = 1;
-  box.appendChild(el('div', 'sec', 'Другие владельцы'));
-  var owners = el('div', 'card');
-  owners.id = 'owners';
-  box.appendChild(owners);
-  var ownersMore = el('button', 'more', 'Показать');
-  ownersMore.id = 'ownersMore';
-  ownersMore.onclick = loadOwners;
-  box.appendChild(ownersMore);
-  if (data.ownerLink) {
-    var btn = el('a', 'btn', 'Профиль владельца');
-    btn.href = '#';
-    btn.onclick = function (event) { event.preventDefault(); openLink(data.ownerLink); };
-    box.appendChild(btn);
-  }
-  if (data.pageUrl) {
-    var foot = el('div', 'foot');
-    var link = el('a', null, 'Посмотреть на t.me');
-    link.href = '#';
-    link.onclick = function (event) { event.preventDefault(); openLink(data.pageUrl); };
-    foot.appendChild(link);
-    box.appendChild(foot);
-  }
+  box.appendChild(el('div', 'foot', 'Пока подарок не улучшен, у него нет ни номера, ни модели, ни публичного владельца.'));
 }
 
-function loadOwners() {
-  var box = document.getElementById('owners');
-  var button = document.getElementById('ownersMore');
-  if (!box || !button) { return; }
-  button.textContent = 'Загружаю';
-  fetch('/api/owners/' + ownerSlug + '?from=' + ownerNext).then(function (response) { return response.json(); }).then(function (data) {
-    button.textContent = 'Показать ещё';
-    if (!data || data.error) { return; }
-    (data.items || []).forEach(function (item) {
-      box.appendChild(kv('#' + fmt(item.number), '@' + item.owner, item.link));
-    });
-    ownerNext = data.next || ownerNext + 12;
-  }).catch(function () {
-    button.textContent = 'Показать ещё';
-  });
-}
-
-function openGift(slug, number) {
+function openGift(slug) {
   showDetail();
   var box = document.getElementById('detail');
   box.textContent = '';
   box.appendChild(el('div', 'foot', 'Секунду'));
-  var url = '/api/gift/' + slug + (number ? '?number=' + number : '');
-  fetch(url).then(function (response) { return response.json(); }).then(function (data) {
+  fetch('/api/gift/' + slug).then(function (response) { return response.json(); }).then(function (data) {
     if (!data || data.error) {
       box.textContent = '';
       box.appendChild(el('div', 'foot', 'Не получилось загрузить'));
@@ -745,7 +545,7 @@ if (tg && tg.BackButton) { tg.BackButton.onClick(showList); }
 var params = new URLSearchParams(window.location.search);
 var wanted = params.get('gift') || (tg && tg.initDataUnsafe ? tg.initDataUnsafe.start_param : '') || '';
 loadPage();
-if (wanted) { openGift(String(wanted).replace(/[^a-z0-9]/gi, '').toLowerCase(), ''); }
+if (wanted) { openGift(String(wanted).replace(/[^a-z0-9]/gi, '').toLowerCase()); }
 </script>
 </body>
 </html>
@@ -762,12 +562,8 @@ def group(value: Any) -> str:
         return str(value)
 
 
-def webapp_available() -> bool:
-    return WEBAPP_URL.startswith("https://")
-
-
 def webapp_link(slug: str = "") -> str:
-    if not webapp_available():
+    if not WEBAPP_URL.startswith("https://"):
         return ""
     if slug:
         return WEBAPP_URL + "/?gift=" + slug
@@ -785,21 +581,17 @@ def app_markup(slug: str = "", label: str = "Открыть") -> Optional[Inline
 
 def card_text(data: Dict[str, Any]) -> str:
     lines = ["<b>" + escape(str(data.get("name") or "")) + "</b>"]
-    if data.get("owner"):
-        lines.append("Владелец: @" + escape(str(data["owner"])))
-    if data.get("number"):
-        lines.append("Номер: #" + group(data["number"]))
-    if data.get("date"):
-        lines.append("Дата: " + escape(str(data["date"])))
-    for label, key in (("Модель", "model"), ("Фон", "backdrop"), ("Символ", "symbol")):
-        if data.get(key):
-            lines.append(label + ": " + escape(str(data[key])))
-    if data.get("issuedTotal"):
-        lines.append("Выпущено: " + escape(str(data.get("issued") or "")) + " из " + escape(str(data["issuedTotal"])))
     if data.get("stars") is not None:
-        lines.append("Цена подарка: ⭐ " + group(data["stars"]))
-    if not data.get("owner"):
-        lines.append("Владельца с юзернеймом у этого подарка не нашёл.")
+        lines.append("Стоимость: ⭐ " + group(data["stars"]))
+    if data.get("upgradeStars") is not None:
+        lines.append("Улучшение: ⭐ " + group(data["upgradeStars"]))
+    if data.get("supply"):
+        lines.append("Не улучшено: " + group(data["left"]) + " из " + group(data["supply"]))
+        lines.append("Уже улучшено: " + group(data["upgraded"]))
+    if data.get("total"):
+        lines.append("В продаже: " + group(data.get("remaining") or 0) + " из " + group(data["total"]))
+    elif not data.get("onSale"):
+        lines.append("В продаже: нет")
     return "\n".join(lines)
 
 
@@ -808,33 +600,36 @@ async def reply_gift(message: Message, query: str) -> None:
     if gift is None:
         await message.answer(
             "Такого подарка не нашёл. Проверь название или открой список.",
-            reply_markup=app_markup(),
+            reply_markup=app_markup("", "Открыть список"),
         )
         return
     try:
-        data = await gift_payload(gift, None)
+        data = await gift_payload(gift)
     except Exception:
         await message.answer("Источник молчит, попробуй через минуту.")
         return
-    await message.answer(card_text(data), reply_markup=app_markup(gift["slug"], "Посмотреть в приложении"))
+    await message.answer(
+        card_text(data),
+        reply_markup=app_markup(gift["slug"], "Посмотреть в приложении"),
+    )
 
 
 @router.message(CommandStart())
 async def on_start(message: Message) -> None:
     text = (
-        "Привет. Здесь улучшенные подарки Telegram — те, что стали NFT: со своей моделью, фоном и символом.\n\n"
-        "Открой список: по две иконки в ряд. Тапни по любой — покажу владельца, номер, дату, атрибуты и тираж. Маркеты и ботов пропускаю, только живые владельцы с юзернеймом."
+        "Привет. Здесь подарки Telegram, которые ещё не улучшены — в обычном виде, без номера, модели и фона.\n\n"
+        "По две иконки в ряд, сверху те, у кого больше всего неулучшенных копий. Тапни по любой — покажу цену, стоимость улучшения, сколько копий ещё не улучшено и сколько осталось в продаже."
     )
-    await message.answer(text, reply_markup=app_markup("", "Открыть подарки"))
+    await message.answer(text, reply_markup=app_markup("", "Открыть"))
 
 
 @router.message(Command("app"))
 async def on_app(message: Message) -> None:
-    markup = app_markup("", "Открыть подарки")
+    markup = app_markup("", "Открыть")
     if markup is None:
         await message.answer("Адрес приложения не задан, поставь WEBAPP_URL.")
         return
-    await message.answer("Список подарков:", reply_markup=markup)
+    await message.answer("Неулучшенные подарки:", reply_markup=markup)
 
 
 @router.message(Command("gift"))
@@ -866,18 +661,17 @@ async def start_bot(stop_event: asyncio.Event) -> None:
     bot = Bot(token=BOT_TOKEN, default=DefaultBotProperties(parse_mode=ParseMode.HTML))
     dispatcher = Dispatcher()
     dispatcher.include_router(router)
+    commands = [
+        BotCommand(command="start", description="Начать"),
+        BotCommand(command="app", description="Список подарков"),
+        BotCommand(command="gift", description="Найти подарок"),
+        BotCommand(command="about", description="Откуда данные"),
+    ]
     while not stop_event.is_set():
         try:
             me = await bot.get_me()
             print("telegram authorized as @" + (me.username or "unknown"), flush=True)
-            await bot.set_my_commands(
-                [
-                    BotCommand(command="start", description="Начать"),
-                    BotCommand(command="app", description="Список подарков"),
-                    BotCommand(command="gift", description="Найти подарок"),
-                    BotCommand(command="about", description="Откуда данные"),
-                ]
-            )
+            await bot.set_my_commands(commands)
             await bot.delete_webhook(drop_pending_updates=True)
             await dispatcher.start_polling(bot, handle_signals=False)
             break
@@ -903,7 +697,6 @@ async def run() -> None:
     app.router.add_get("/", handle_index)
     app.router.add_get("/api/feed", handle_feed)
     app.router.add_get("/api/gift/{slug}", handle_gift)
-    app.router.add_get("/api/owners/{slug}", handle_owners)
     app.router.add_get("/health", handle_health)
     runner = web.AppRunner(app)
     await runner.setup()
@@ -938,11 +731,3 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-
-
-BOT_COMMANDS = [
-    BotCommand(command="start", description="Начать"),
-    BotCommand(command="app", description="Список подарков"),
-    BotCommand(command="gift", description="Найти подарок"),
-    BotCommand(command="about", description="Откуда данные"),
-]
