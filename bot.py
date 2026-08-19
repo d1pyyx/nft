@@ -40,6 +40,7 @@ CATALOG_TTL = 900.0
 GIFT_TTL = 900.0
 NFT_TTL = 180.0
 MAX_NUMBER = 5000000
+TELEGRAM_API = "https://api.telegram.org/bot" + BOT_TOKEN
 
 
 class UpstreamError(Exception):
@@ -161,11 +162,32 @@ def format_attribute(item: Optional[Dict[str, Any]]) -> Optional[str]:
     return str(item.get("name"))
 
 
+async def load_sale_info() -> Dict[str, Dict[str, Any]]:
+    if not BOT_TOKEN:
+        return {}
+    try:
+        data = await fetch_json(TELEGRAM_API + "/getAvailableGifts")
+    except Exception:
+        return {}
+    result = (data or {}).get("result") or {}
+    info: Dict[str, Dict[str, Any]] = {}
+    for item in result.get("gifts") or []:
+        info[str(item.get("id"))] = {
+            "stars": item.get("star_count"),
+            "upgradeStars": item.get("upgrade_star_count"),
+            "total": item.get("total_count"),
+            "remaining": item.get("remaining_count"),
+            "premium": bool(item.get("is_premium")),
+        }
+    return info
+
+
 async def load_catalog() -> Dict[str, Any]:
-    ids, upgradable, totals = await asyncio.gather(
+    ids, upgradable, totals, sale = await asyncio.gather(
         fetch_json(API_BASE + "/ids"),
         fetch_json(API_BASE + "/gifts"),
         fetch_json(API_BASE + "/total"),
+        load_sale_info(),
     )
     upgradable_slugs = {to_slug(name) for name in (upgradable or [])}
     gifts: List[Dict[str, Any]] = []
@@ -180,6 +202,11 @@ async def load_catalog() -> Dict[str, Any]:
                 "id": str(gift_id),
                 "order": index,
                 "upgradable": True,
+                "stars": (sale.get(str(gift_id)) or {}).get("stars"),
+                "upgradeStars": (sale.get(str(gift_id)) or {}).get("upgradeStars"),
+                "total": (sale.get(str(gift_id)) or {}).get("total"),
+                "remaining": (sale.get(str(gift_id)) or {}).get("remaining"),
+                "onSale": str(gift_id) in sale,
                 "icon": icon_url(gift_id, 256),
                 "iconLarge": icon_url(gift_id, 512),
                 "sticker": API_BASE + "/original/" + str(gift_id) + ".tgs",
@@ -226,6 +253,11 @@ async def load_gift(slug: str) -> Dict[str, Any]:
         "id": str(gift.get("id") or entry["id"]),
         "customEmojiId": str(gift.get("customEmojiId") or ""),
         "upgradable": bool(entry["upgradable"]),
+        "stars": entry.get("stars"),
+        "upgradeStars": entry.get("upgradeStars"),
+        "total": entry.get("total"),
+        "remaining": entry.get("remaining"),
+        "onSale": bool(entry.get("onSale")),
         "icon": entry["icon"],
         "iconLarge": entry["iconLarge"],
         "sticker": entry["sticker"],
@@ -394,6 +426,28 @@ def owner_display(owner: Dict[str, Any]) -> str:
     return "скрыт"
 
 
+async def load_owners(slug: str, start: int, count: int) -> List[Dict[str, Any]]:
+    numbers = [n for n in range(start, start + count) if 1 <= n <= MAX_NUMBER]
+    semaphore = asyncio.Semaphore(6)
+
+    async def one(number: int) -> Optional[Dict[str, Any]]:
+        async with semaphore:
+            try:
+                data = await get_nft(slug, number)
+            except Exception:
+                return None
+        owner = data["owner"]
+        return {
+            "number": data["number"],
+            "owner": owner_display(owner),
+            "link": owner.get("link") or "",
+            "issued": data["issued"],
+        }
+
+    found = await asyncio.gather(*[one(number) for number in numbers])
+    return [item for item in found if item is not None]
+
+
 def webapp_available() -> bool:
     return WEBAPP_URL.startswith("https://")
 
@@ -435,8 +489,8 @@ router = Router()
 @router.message(CommandStart())
 async def on_start(message: Message) -> None:
     text = (
-        "Привет. Здесь нфт-подарки Telegram в непрокачанном виде — те, что можно прокачать. Обычные подарки без прокачки сюда не попадают.\n\n"
-        "Открой каталог и тапни по любому — сразу покажу инфу и владельца: юзернейм, а если его нет, то Telegram ID. "
+        "Привет. Здесь подарки Telegram в не улучшенном виде — те, которые можно улучшить.\n\n"
+        "Открой каталог и тапни по любому — покажу цену в звёздах, наличие и владельцев: юзернейм, а если его нет, то Telegram ID. "
         "Нужен другой экземпляр — впиши номер в карточке.\n\n"
         "Можно и текстом:\n"
         "/app — каталог\n"
@@ -485,7 +539,7 @@ async def on_gifts(message: Message) -> None:
         "Всего подарков: <b>" + str(gifts_total.get("total", "—")) + "</b>",
         "Лимитированных: <b>" + str(gifts_total.get("limited", "—")) + "</b>",
         "Безлимитных: <b>" + str(gifts_total.get("unlimited", "—")) + "</b>",
-        "Можно прокачать, они в каталоге: <b>" + str(len(catalog.get("gifts") or [])) + "</b>",
+        "Можно улучшить, они в каталоге: <b>" + str(len(catalog.get("gifts") or [])) + "</b>",
         "",
         "Моделей: <b>" + str(totals.get("models", "—")) + "</b>",
         "Фонов: <b>" + str(totals.get("backdrops", "—")) + "</b>",
@@ -506,10 +560,14 @@ async def send_gift_card(message: Message, query: str) -> None:
     rarest = data["rarest"]
     lines = [
         "<b>" + escape(data["name"]) + "</b>",
-        "Нфт-подарок, здесь в непрокачанном виде.",
+        "Не улучшенный вид.",
         "",
         "ID: <code>" + escape(data["id"]) + "</code>",
     ]
+    if data.get("stars") is not None:
+        lines.append("Стоимость: ⭐ " + str(data["stars"]))
+    if data.get("total"):
+        lines.append("Наличие: " + str(data.get("remaining") or 0) + " из " + str(data["total"]))
     if rarest["model"]:
         lines.append("Самая редкая модель: " + escape(str(rarest["model"])))
     lines.append("")
@@ -615,9 +673,12 @@ button,input{font:inherit;color:inherit;background:none;border:0;margin:0;paddin
 #search{width:100%;padding:10px 0;border-bottom:1px solid var(--line);outline:none}
 #search::placeholder{color:var(--muted)}
 #count{padding:12px 0;color:var(--muted);font-size:13px}
+.sec{padding:18px 0 4px;color:var(--muted);font-size:13px}
+.more{width:100%;padding:12px 0;margin-top:6px;color:var(--link);font-size:14px;background:none;border:none;border-top:1px solid var(--line)}
 .row{display:flex;align-items:center;gap:14px;width:100%;padding:11px 0;border-top:1px solid var(--line);text-align:left;cursor:pointer}
 .row img{flex:0 0 auto;width:44px;height:44px;object-fit:contain}
 .row span{min-width:0;overflow:hidden;white-space:nowrap;text-overflow:ellipsis}
+.row em{margin-left:auto;flex:0 0 auto;font-style:normal;color:var(--muted);font-size:13px}
 .hide{display:none}
 .back{padding:14px 0;color:var(--muted);font-size:14px;cursor:pointer}
 .hero{display:flex;flex-direction:column;align-items:center;gap:8px;padding:4px 0 20px}
@@ -676,6 +737,38 @@ function kv(label, value) {
   return row;
 }
 
+function fmtNum(value) {
+  return String(value).replace(/\B(?=(\d{3})+(?!\d))/g, ' ');
+}
+
+function stars(value) {
+  return value === null || value === undefined ? '' : '⭐ ' + fmtNum(value);
+}
+
+function openLink(link) {
+  if (tg && tg.openTelegramLink && link.indexOf('https://t.me/') === 0) tg.openTelegramLink(link);
+  else window.open(link, '_blank');
+}
+
+function ownerRow(item) {
+  const row = el('div', 'kv');
+  row.appendChild(el('b', null, '#' + item.number));
+  const cell = el('span');
+  if (item.link) {
+    const anchor = el('a', null, item.owner);
+    anchor.href = item.link;
+    anchor.addEventListener('click', function (event) {
+      event.preventDefault();
+      openLink(item.link);
+    });
+    cell.appendChild(anchor);
+  } else {
+    cell.textContent = item.owner;
+  }
+  row.appendChild(cell);
+  return row;
+}
+
 function slugify(value) {
   return String(value || '').toLowerCase().replace(/[^a-z0-9]+/g, '');
 }
@@ -730,6 +823,7 @@ function renderList() {
     img.loading = 'lazy';
     row.appendChild(img);
     row.appendChild(el('span', null, gift.name));
+    if (gift.stars !== null && gift.stars !== undefined) row.appendChild(el('em', null, stars(gift.stars)));
     frag.appendChild(row);
   });
   listEl.textContent = '';
@@ -744,11 +838,15 @@ function renderDetail(gift) {
   img.alt = '';
   hero.appendChild(img);
   hero.appendChild(el('h1', null, gift.name));
-  hero.appendChild(el('p', null, 'нфт-подарок, ещё не прокачан'));
+  hero.appendChild(el('p', null, 'не улучшенный вид'));
   detailEl.appendChild(hero);
+  if (gift.stars !== null && gift.stars !== undefined) detailEl.appendChild(kv('Стоимость', stars(gift.stars)));
+  if (gift.upgradeStars) detailEl.appendChild(kv('Улучшение', stars(gift.upgradeStars)));
+  if (gift.total) detailEl.appendChild(kv('Наличие', fmtNum(gift.remaining || 0) + ' из ' + fmtNum(gift.total)));
+  else if (!gift.onSale) detailEl.appendChild(kv('Наличие', 'уже не продаётся'));
   detailEl.appendChild(kv('ID', gift.id));
   const ask = el('div', 'ask');
-  ask.appendChild(el('p', null, 'Показываю первый экземпляр. Нужен другой — впиши номер.'));
+  ask.appendChild(el('p', null, 'Ищешь конкретный номер? Впиши его.'));
   const line = el('div');
   const input = el('input');
   input.id = 'num';
@@ -764,15 +862,47 @@ function renderDetail(gift) {
   detailEl.appendChild(ask);
   const box = el('div', 'msg');
   detailEl.appendChild(box);
+  detailEl.appendChild(el('div', 'sec', 'Владельцы'));
+  const owners = el('div');
+  detailEl.appendChild(owners);
+  const more = el('button', 'more hide', 'Показать ещё');
+  more.type = 'button';
+  detailEl.appendChild(more);
   detailEl.appendChild(el('div', 'foot', 'Данные: api.changes.tg (@GiftChanges)'));
+  let next = 1;
+  async function loadOwners() {
+    more.classList.add('hide');
+    const note = el('div', 'msg', next === 1 ? 'Ищу владельцев…' : 'Ищу дальше…');
+    owners.appendChild(note);
+    let list = [];
+    try {
+      const response = await fetch('/api/owners/' + encodeURIComponent(gift.slug) + '?from=' + next + '&count=20');
+      const data = await response.json();
+      if (!response.ok) throw new Error('fail');
+      list = data.owners || [];
+    } catch (error) {
+      note.textContent = 'Не получилось загрузить владельцев.';
+      return;
+    }
+    owners.removeChild(note);
+    list.forEach(function (item) {
+      owners.appendChild(ownerRow(item));
+    });
+    if (!owners.childElementCount) {
+      owners.appendChild(el('div', 'msg', 'Его ещё никто не улучшал, владельцев пока нет.'));
+      return;
+    }
+    next += 20;
+    more.classList.remove('hide');
+  }
+  more.addEventListener('click', loadOwners);
+  loadOwners();
   button.addEventListener('click', function () {
     lookupNumber(input.value, box);
   });
   input.addEventListener('keydown', function (event) {
     if (event.key === 'Enter') lookupNumber(input.value, box);
   });
-  input.value = '1';
-  lookupNumber('1', box);
 }
 
 async function openGift(slug) {
@@ -835,7 +965,7 @@ async function lookupNumber(value, box) {
     if (data.symbol) box.appendChild(kv('Узор', data.symbol));
   } catch (error) {
     box.className = 'msg';
-    box.textContent = 'Этот экземпляр ещё не прокачан — страницы у него нет.';
+    box.textContent = 'Этот номер ещё не улучшали, владельца у него нет.';
   }
 }
 
@@ -940,6 +1070,24 @@ async def handle_nft(request: web.Request) -> web.Response:
     return json_response(data)
 
 
+async def handle_owners(request: web.Request) -> web.Response:
+    slug = to_slug(request.match_info.get("slug", ""))
+    if not slug:
+        return json_response({"error": "empty slug"}, 400)
+    raw_start = re.sub(r"[^0-9]", "", request.query.get("from", "1")) or "1"
+    raw_count = re.sub(r"[^0-9]", "", request.query.get("count", "20")) or "20"
+    start = max(1, min(int(raw_start), MAX_NUMBER))
+    count = max(1, min(int(raw_count), 24))
+    gift = await find_gift(slug)
+    if gift is None:
+        return json_response({"error": "gift not found"}, 404)
+    try:
+        owners = await load_owners(gift["slug"], start, count)
+    except UpstreamError as error:
+        return json_response({"error": error.message}, error.status)
+    return json_response({"slug": gift["slug"], "from": start, "owners": owners})
+
+
 async def handle_credits(request: web.Request) -> web.Response:
     return web.Response(text=CREDIT + "\n", content_type="text/plain", charset="utf-8")
 
@@ -954,6 +1102,7 @@ def build_app() -> web.Application:
     app.router.add_get("/api/catalog", handle_catalog)
     app.router.add_get("/api/gift/{slug}", handle_gift)
     app.router.add_get("/api/nft/{slug}/{number}", handle_nft)
+    app.router.add_get("/api/owners/{slug}", handle_owners)
     app.router.add_get("/credits", handle_credits)
     app.router.add_get("/health", handle_health)
     return app
