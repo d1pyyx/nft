@@ -26,7 +26,7 @@ from aiohttp import web
 
 DEFAULT_BOT_TOKEN = "8788134150:AAFGBSSZlIaa0wMhZMgOx3_WeFPBILOR818"
 BOT_TOKEN = (os.getenv("BOT_TOKEN") or DEFAULT_BOT_TOKEN).strip()
-DEFAULT_WEBAPP_URL = "https://nft-production-6950.up.railway.app"
+DEFAULT_WEBAPP_URL = "https://nft-production-f42b.up.railway.app"
 WEBAPP_URL = (os.getenv("WEBAPP_URL") or DEFAULT_WEBAPP_URL).strip().rstrip("/")
 HOST = os.getenv("HOST", "0.0.0.0")
 PORT = int(os.getenv("PORT", "8080"))
