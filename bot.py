@@ -34,6 +34,7 @@ PORT = int(os.getenv("PORT", "8080"))
 API_BASE = "https://api.changes.tg"
 TELEGRAM_API = "https://api.telegram.org/bot" + BOT_TOKEN
 TME_NFT_BASE = "https://t.me/nft"
+FRAGMENT_BASE = "https://nft.fragment.com/gift"
 USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36"
 CREDIT = "Данные: api.changes.tg и t.me/nft, спасибо @GiftChanges"
 DEFAULT_BLOCKED = "mrktbank,mrkt,tonnel,tonnelnetwork,portals,portalsmarket,fragment,getgems,tonnelmarket"
@@ -297,10 +298,16 @@ async def load_instance(slug: str, number: int) -> Optional[Dict[str, Any]]:
     if match:
         issued = " ".join(match.group(1).replace(",", " ").split())
         total = " ".join(match.group(2).replace(",", " ").split())
+    base = FRAGMENT_BASE + "/" + slug + "-" + str(number)
     return {
         "slug": slug,
         "number": number,
         "owner": owner,
+        "thumb": base + ".webp",
+        "image": base + ".large.jpg",
+        "model": (rows.get("model") or {}).get("value") or "",
+        "backdrop": (rows.get("backdrop") or {}).get("value") or "",
+        "symbol": (rows.get("symbol") or {}).get("value") or "",
         "date": format_date(page),
         "issued": issued,
         "issuedTotal": total,
@@ -330,7 +337,8 @@ def feed_card(gift: Dict[str, Any], instance: Dict[str, Any]) -> Dict[str, Any]:
     return {
         "slug": gift["slug"],
         "name": gift["name"],
-        "icon": gift["icon"],
+        "icon": instance.get("thumb") or gift["icon"],
+        "full": instance.get("image") or gift["icon"],
         "number": instance["number"],
         "owner": instance["owner"]["username"],
         "stars": gift["stars"],
@@ -372,7 +380,10 @@ async def gift_payload(gift: Dict[str, Any], number: Optional[int]) -> Dict[str,
     return {
         "slug": gift["slug"],
         "name": gift["name"],
-        "icon": gift["iconLarge"],
+        "icon": (instance or {}).get("image") or gift["iconLarge"],
+        "model": (instance or {}).get("model") or "",
+        "backdrop": (instance or {}).get("backdrop") or "",
+        "symbol": (instance or {}).get("symbol") or "",
         "stars": gift["stars"],
         "upgradeStars": gift["upgradeStars"],
         "total": gift["total"],
@@ -387,6 +398,24 @@ async def gift_payload(gift: Dict[str, Any], number: Optional[int]) -> Dict[str,
         "pageUrl": (instance or {}).get("pageUrl") or "",
         "visible": bool(owner.get("username")) and owner_ok(owner),
     }
+
+
+async def load_owners(slug: str, start: int, count: int) -> List[Dict[str, Any]]:
+    first = max(1, min(MAX_NUMBER, start))
+    numbers = list(range(first, first + max(1, min(24, count))))
+    found = await asyncio.gather(*[get_instance(slug, number) for number in numbers])
+    items: List[Dict[str, Any]] = []
+    for item in found:
+        if item is None or not owner_ok(item["owner"]):
+            continue
+        items.append(
+            {
+                "number": item["number"],
+                "owner": item["owner"]["username"],
+                "link": item["owner"]["link"],
+            }
+        )
+    return items
 
 
 def json_response(payload: Any, status: int = 200) -> web.Response:
@@ -427,6 +456,19 @@ async def handle_gift(request: web.Request) -> web.Response:
         return json_response({"error": "failed"}, 502)
 
 
+async def handle_owners(request: web.Request) -> web.Response:
+    gift = await find_gift(request.match_info.get("slug", ""))
+    if gift is None:
+        return json_response({"error": "not found"}, 404)
+    raw = re.sub(r"[^0-9]", "", request.query.get("from", "1")) or "1"
+    start = max(1, min(MAX_NUMBER, int(raw)))
+    try:
+        items = await load_owners(gift["slug"], start, 12)
+    except Exception:
+        return json_response({"error": "failed"}, 502)
+    return json_response({"items": items, "next": start + 12})
+
+
 async def handle_health(request: web.Request) -> web.Response:
     return json_response({"ok": True, "credit": CREDIT})
 
@@ -463,6 +505,7 @@ input{width:100%;padding:10px 12px;border:0;border-radius:10px;background:var(--
 .kv span{flex:1}
 .kv a{color:var(--link);text-decoration:none}
 .btn{display:block;margin-top:14px;padding:13px;border:0;border-radius:12px;background:var(--btn);color:var(--btntext);font-size:15px;text-align:center;text-decoration:none}
+.sec{margin:16px 2px 8px;color:var(--muted);font-size:13px}
 .foot{margin:14px 2px 0;color:var(--muted);font-size:12px;text-align:center}
 .foot a{color:var(--link);text-decoration:none}
 </style>
@@ -486,6 +529,8 @@ if (tg) { tg.ready(); tg.expand(); }
 var items = [];
 var page = 1;
 var loading = false;
+var ownerSlug = '';
+var ownerNext = 1;
 
 function el(tag, cls, text) {
   var node = document.createElement(tag);
@@ -563,8 +608,9 @@ function renderGrid() {
     img.src = item.icon;
     img.alt = '';
     img.loading = 'lazy';
+    img.onerror = function () { if (item.full && img.src !== item.full) { img.src = item.full; } };
     cell.appendChild(img);
-    cell.appendChild(el('b', null, item.name));
+    cell.appendChild(el('b', null, item.name + ' #' + fmt(item.number)));
     cell.appendChild(el('u', null, '@' + item.owner));
     cell.onclick = function () { openGift(item.slug, item.number); };
     grid.appendChild(cell);
@@ -583,26 +629,40 @@ function renderDetail(data) {
   img.alt = '';
   hero.appendChild(img);
   box.appendChild(hero);
-  box.appendChild(el('div', 'title', data.name));
+  box.appendChild(el('div', 'title', data.name + (data.number ? ' #' + fmt(data.number) : '')));
   var card = el('div', 'card');
   if (data.owner) {
     card.appendChild(kv('Владелец', '@' + data.owner, data.ownerLink));
   }
-  if (data.number) {
-    card.appendChild(kv('Номер', '#' + fmt(data.number)));
-  }
   if (data.date) {
     card.appendChild(kv('Дата', data.date));
   }
-  if (data.stars !== null && data.stars !== undefined) {
-    card.appendChild(kv('Стоимость', stars(data.stars)));
+  if (data.model) {
+    card.appendChild(kv('Модель', data.model));
   }
-  if (data.total) {
-    card.appendChild(kv('Наличие', fmt(data.remaining || 0) + ' из ' + fmt(data.total)));
-  } else if (!data.onSale) {
-    card.appendChild(kv('Наличие', 'уже не продаётся'));
+  if (data.backdrop) {
+    card.appendChild(kv('Фон', data.backdrop));
+  }
+  if (data.symbol) {
+    card.appendChild(kv('Символ', data.symbol));
+  }
+  if (data.issuedTotal) {
+    card.appendChild(kv('Выпущено', data.issued + ' из ' + data.issuedTotal));
+  }
+  if (data.stars !== null && data.stars !== undefined) {
+    card.appendChild(kv('Цена подарка', stars(data.stars)));
   }
   box.appendChild(card);
+  ownerSlug = data.slug;
+  ownerNext = 1;
+  box.appendChild(el('div', 'sec', 'Другие владельцы'));
+  var owners = el('div', 'card');
+  owners.id = 'owners';
+  box.appendChild(owners);
+  var ownersMore = el('button', 'more', 'Показать');
+  ownersMore.id = 'ownersMore';
+  ownersMore.onclick = loadOwners;
+  box.appendChild(ownersMore);
   if (data.ownerLink) {
     var btn = el('a', 'btn', 'Профиль владельца');
     btn.href = '#';
@@ -617,6 +677,23 @@ function renderDetail(data) {
     foot.appendChild(link);
     box.appendChild(foot);
   }
+}
+
+function loadOwners() {
+  var box = document.getElementById('owners');
+  var button = document.getElementById('ownersMore');
+  if (!box || !button) { return; }
+  button.textContent = 'Загружаю';
+  fetch('/api/owners/' + ownerSlug + '?from=' + ownerNext).then(function (response) { return response.json(); }).then(function (data) {
+    button.textContent = 'Показать ещё';
+    if (!data || data.error) { return; }
+    (data.items || []).forEach(function (item) {
+      box.appendChild(kv('#' + fmt(item.number), '@' + item.owner, item.link));
+    });
+    ownerNext = data.next || ownerNext + 12;
+  }).catch(function () {
+    button.textContent = 'Показать ещё';
+  });
 }
 
 function openGift(slug, number) {
@@ -714,12 +791,13 @@ def card_text(data: Dict[str, Any]) -> str:
         lines.append("Номер: #" + group(data["number"]))
     if data.get("date"):
         lines.append("Дата: " + escape(str(data["date"])))
+    for label, key in (("Модель", "model"), ("Фон", "backdrop"), ("Символ", "symbol")):
+        if data.get(key):
+            lines.append(label + ": " + escape(str(data[key])))
+    if data.get("issuedTotal"):
+        lines.append("Выпущено: " + escape(str(data.get("issued") or "")) + " из " + escape(str(data["issuedTotal"])))
     if data.get("stars") is not None:
-        lines.append("Стоимость: ⭐ " + group(data["stars"]))
-    if data.get("total"):
-        lines.append("Наличие: " + group(data.get("remaining") or 0) + " из " + group(data["total"]))
-    elif not data.get("onSale"):
-        lines.append("Наличие: уже не продаётся")
+        lines.append("Цена подарка: ⭐ " + group(data["stars"]))
     if not data.get("owner"):
         lines.append("Владельца с юзернеймом у этого подарка не нашёл.")
     return "\n".join(lines)
@@ -744,8 +822,8 @@ async def reply_gift(message: Message, query: str) -> None:
 @router.message(CommandStart())
 async def on_start(message: Message) -> None:
     text = (
-        "Привет. Здесь подарки Telegram в обычном, не улучшенном виде — такими, какими их дарят.\n\n"
-        "Открой список: иконки идут по две в ряд. Тапни по любой — покажу юзернейм владельца, дату, цену в звёздах и наличие. Маркеты и боты пропускаю, только живые владельцы с юзернеймом."
+        "Привет. Здесь улучшенные подарки Telegram — те, что стали NFT: со своей моделью, фоном и символом.\n\n"
+        "Открой список: по две иконки в ряд. Тапни по любой — покажу владельца, номер, дату, атрибуты и тираж. Маркеты и ботов пропускаю, только живые владельцы с юзернеймом."
     )
     await message.answer(text, reply_markup=app_markup("", "Открыть подарки"))
 
@@ -825,6 +903,7 @@ async def run() -> None:
     app.router.add_get("/", handle_index)
     app.router.add_get("/api/feed", handle_feed)
     app.router.add_get("/api/gift/{slug}", handle_gift)
+    app.router.add_get("/api/owners/{slug}", handle_owners)
     app.router.add_get("/health", handle_health)
     runner = web.AppRunner(app)
     await runner.setup()
