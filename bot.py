@@ -118,6 +118,33 @@ def icon_url(gift_id: Any, size: int) -> str:
     return API_BASE + "/original/" + str(gift_id) + ".png?size=" + str(size)
 
 
+MONTHS = [
+    "янв",
+    "фев",
+    "мар",
+    "апр",
+    "мая",
+    "июн",
+    "июл",
+    "авг",
+    "сен",
+    "окт",
+    "ноя",
+    "дек",
+]
+
+
+def format_ts(value: Any) -> str:
+    try:
+        stamp = int(value)
+    except Exception:
+        return ""
+    if stamp <= 0:
+        return ""
+    parts = time.gmtime(stamp)
+    return str(parts.tm_mday) + " " + MONTHS[parts.tm_mon - 1] + " " + str(parts.tm_year)
+
+
 async def load_sale_info() -> Dict[str, Dict[str, Any]]:
     if not BOT_TOKEN:
         return {}
@@ -242,6 +269,18 @@ def left_of(gift: Dict[str, Any], stats: Dict[str, int]) -> int:
     return max(0, supply - int(stats.get("upgraded") or 0))
 
 
+async def load_gift_info(slug: str) -> Dict[str, Any]:
+    try:
+        data = await fetch_json(API_BASE + "/gift/" + slug)
+    except Exception:
+        return {}
+    return dict((data or {}).get("gift") or {})
+
+
+async def get_gift_info(slug: str) -> Dict[str, Any]:
+    return await CACHE.get("info:" + slug, CATALOG_TTL, lambda: load_gift_info(slug))
+
+
 def feed_card(gift: Dict[str, Any], stats: Dict[str, int]) -> Dict[str, Any]:
     return {
         "slug": gift["slug"],
@@ -286,11 +325,12 @@ async def get_feed(page: int) -> Dict[str, Any]:
 
 
 async def gift_payload(gift: Dict[str, Any]) -> Dict[str, Any]:
-    stats = await get_stats(gift["slug"])
+    stats, info = await asyncio.gather(get_stats(gift["slug"]), get_gift_info(gift["slug"]))
     return {
         "slug": gift["slug"],
         "name": gift["name"],
         "icon": gift["iconLarge"],
+        "released": format_ts(info.get("releasedAt")),
         "stars": gift["stars"],
         "upgradeStars": gift["upgradeStars"],
         "total": gift["total"],
@@ -484,6 +524,9 @@ function renderDetail(data) {
   if (data.upgradeStars !== null && data.upgradeStars !== undefined) {
     card.appendChild(kv('Улучшение', stars(data.upgradeStars)));
   }
+  if (data.released) {
+    card.appendChild(kv('Выпущен', data.released));
+  }
   if (data.supply) {
     card.appendChild(kv('Не улучшено', fmt(data.left) + ' из ' + fmt(data.supply)));
     card.appendChild(kv('Уже улучшено', fmt(data.upgraded)));
@@ -585,6 +628,8 @@ def card_text(data: Dict[str, Any]) -> str:
         lines.append("Стоимость: ⭐ " + group(data["stars"]))
     if data.get("upgradeStars") is not None:
         lines.append("Улучшение: ⭐ " + group(data["upgradeStars"]))
+    if data.get("released"):
+        lines.append("Выпущен: " + str(data["released"]))
     if data.get("supply"):
         lines.append("Не улучшено: " + group(data["left"]) + " из " + group(data["supply"]))
         lines.append("Уже улучшено: " + group(data["upgraded"]))
