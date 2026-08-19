@@ -409,7 +409,7 @@ def app_inline_markup(slug: Optional[str] = None) -> Optional[InlineKeyboardMark
         inline_keyboard=[
             [
                 InlineKeyboardButton(
-                    text="🎁 Открыть каталог",
+                    text="Открыть каталог",
                     web_app=WebAppInfo(url=webapp_link(slug)),
                 )
             ]
@@ -421,7 +421,7 @@ def app_reply_markup() -> Optional[ReplyKeyboardMarkup]:
     if not webapp_available():
         return None
     return ReplyKeyboardMarkup(
-        keyboard=[[KeyboardButton(text="🎁 Каталог подарков", web_app=WebAppInfo(url=webapp_link()))]],
+        keyboard=[[KeyboardButton(text="Каталог", web_app=WebAppInfo(url=webapp_link()))]],
         resize_keyboard=True,
         is_persistent=True,
     )
@@ -433,26 +433,21 @@ router = Router()
 @router.message(CommandStart())
 async def on_start(message: Message) -> None:
     text = (
-        "🎁 <b>Gift Changes Explorer</b>\n\n"
-        "Каталог всех подарков Telegram в непрокачанном виде: оригинальная иконка, ID, "
-        "модели, фоны и узоры. Открой мини-приложение, найди подарок в списке и укажи номер "
-        "коллекционного — увидишь дату выпуска, тираж и владельца с переходом в профиль.\n\n"
-        "<b>Команды</b>\n"
-        "/app — открыть мини-приложение\n"
-        "/gifts — статистика каталога\n"
-        "/gift Scared Cat — карточка подарка\n"
-        "/nft scaredcat 1 — владелец коллекционного\n"
-        "/about — источник данных\n\n"
+        "Привет. Здесь все подарки Telegram в обычном виде — такие, какими их присылают, без прокачки.\n\n"
+        "Открой каталог: там список и поиск, тапни по подарку — увидишь его карточку. "
+        "Знаешь номер экземпляра — впиши его там же, и получишь дату выпуска, тираж и владельца.\n\n"
+        "Можно и текстом:\n"
+        "/app — каталог\n"
+        "/gifts — сколько всего подарков\n"
+        "/gift plush pepe — карточка подарка\n"
+        "/nft plushpepe 1 — владелец экземпляра\n\n"
         "<i>" + escape(CREDIT) + "</i>"
     )
     if not webapp_available():
-        text += "\n\n⚠️ Задай переменную <code>WEBAPP_URL</code> (https), чтобы включить кнопку приложения."
+        text += "\n\nКнопки каталога пока нет: нужен адрес приложения в WEBAPP_URL."
     reply_markup = app_reply_markup()
     if reply_markup is not None:
         await message.answer(text, reply_markup=reply_markup)
-        markup = app_inline_markup()
-        if markup is not None:
-            await message.answer("Каталог открывается здесь 👇", reply_markup=markup)
         return
     await message.answer(text)
 
@@ -461,16 +456,16 @@ async def on_start(message: Message) -> None:
 async def on_app(message: Message) -> None:
     markup = app_inline_markup()
     if markup is None:
-        await message.answer("WEBAPP_URL не задан, мини-приложение недоступно.")
+        await message.answer("Адрес приложения не задан, открывать нечего.")
         return
-    await message.answer("Каталог непрокачанных подарков 👇", reply_markup=markup)
+    await message.answer("Каталог здесь:", reply_markup=markup)
 
 
 @router.message(Command("about"))
 async def on_about(message: Message) -> None:
     await message.answer(
-        "Данные о подарках, моделях, фонах и узорах: <b>api.changes.tg</b>\n"
-        "Владельцы и тиражи коллекционных: <b>t.me/nft</b> и <b>nft.fragment.com</b>\n\n"
+        "Подарки, модели, фоны и узоры беру с api.changes.tg. "
+        "Владельцев и тиражи — со страниц t.me/nft и nft.fragment.com.\n\n"
         "<i>" + escape(CREDIT) + "</i>"
     )
 
@@ -480,22 +475,19 @@ async def on_gifts(message: Message) -> None:
     try:
         catalog = await get_catalog()
     except UpstreamError as error:
-        await message.answer("API недоступен: " + escape(error.message))
+        await message.answer("API сейчас не отвечает: " + escape(error.message))
         return
     totals = catalog.get("totals") or {}
     gifts_total = totals.get("gifts") or {}
     lines = [
-        "📊 <b>Каталог Gift Changes</b>",
-        "Подарков всего: <b>" + str(gifts_total.get("total", "—")) + "</b>",
-        "Прокачиваемых: <b>" + str(gifts_total.get("upgradable", "—")) + "</b>",
+        "Всего подарков: <b>" + str(gifts_total.get("total", "—")) + "</b>",
         "Лимитированных: <b>" + str(gifts_total.get("limited", "—")) + "</b>",
         "Безлимитных: <b>" + str(gifts_total.get("unlimited", "—")) + "</b>",
+        "В каталоге приложения: <b>" + str(len(catalog.get("gifts") or [])) + "</b>",
+        "",
         "Моделей: <b>" + str(totals.get("models", "—")) + "</b>",
         "Фонов: <b>" + str(totals.get("backdrops", "—")) + "</b>",
         "Узоров: <b>" + str(totals.get("patterns", "—")) + "</b>",
-        "В приложении доступно карточек: <b>" + str(len(catalog.get("gifts") or [])) + "</b>",
-        "",
-        "<i>" + escape(CREDIT) + "</i>",
     ]
     await message.answer("\n".join(lines), reply_markup=app_inline_markup())
 
@@ -505,32 +497,21 @@ async def send_gift_card(message: Message, query: str) -> None:
         data = await get_gift(query)
     except UpstreamError as error:
         if error.status == 404:
-            await message.answer("Подарок не найден. Попробуй, например: <code>/gift plush pepe</code>")
+            await message.answer("Не нашёл такой подарок. Попробуй так: <code>/gift plush pepe</code>")
         else:
-            await message.answer("API недоступен: " + escape(error.message))
+            await message.answer("API сейчас не отвечает: " + escape(error.message))
         return
-    counts = data["counts"]
     rarest = data["rarest"]
     lines = [
-        "🎁 <b>" + escape(data["name"]) + "</b>",
-        "Состояние: <b>непрокачанный оригинал</b>",
-        "NFT-версия: <b>" + ("есть" if data["upgradable"] else "нет") + "</b>",
+        "<b>" + escape(data["name"]) + "</b>",
+        "Обычный вид, без прокачки.",
         "",
-        "Моделей: <b>" + str(counts["models"]) + "</b> · Фонов: <b>" + str(counts["backdrops"]) + "</b> · Узоров: <b>" + str(counts["symbols"]) + "</b>",
+        "ID: <code>" + escape(data["id"]) + "</code>",
     ]
     if rarest["model"]:
-        lines.append("Редчайшая модель: <b>" + escape(str(rarest["model"])) + "</b>")
-    if rarest["backdrop"]:
-        lines.append("Редчайший фон: <b>" + escape(str(rarest["backdrop"])) + "</b>")
-    if rarest["symbol"]:
-        lines.append("Редчайший узор: <b>" + escape(str(rarest["symbol"])) + "</b>")
+        lines.append("Самая редкая модель: " + escape(str(rarest["model"])))
     lines.append("")
-    lines.append("Gift ID: <code>" + escape(data["id"]) + "</code>")
-    if data["customEmojiId"]:
-        lines.append("Custom emoji ID: <code>" + escape(data["customEmojiId"]) + "</code>")
-    lines.append("Владелец экземпляра: <code>/nft " + escape(data["slug"]) + " 1</code>")
-    lines.append("")
-    lines.append("<i>" + escape(CREDIT) + "</i>")
+    lines.append("Владельца конкретного экземпляра узнаешь так: <code>/nft " + escape(data["slug"]) + " 1</code>")
     caption = "\n".join(lines)
     markup = app_inline_markup(data["slug"])
     try:
@@ -543,7 +524,7 @@ async def send_gift_card(message: Message, query: str) -> None:
 async def on_gift(message: Message, command: CommandObject) -> None:
     query = (command.args or "").strip()
     if not query:
-        await message.answer("Укажи название: <code>/gift scared cat</code>")
+        await message.answer("Напиши название, например: <code>/gift scared cat</code>")
         return
     await send_gift_card(message, query)
 
@@ -551,53 +532,48 @@ async def on_gift(message: Message, command: CommandObject) -> None:
 @router.message(Command("nft"))
 async def on_nft(message: Message, command: CommandObject) -> None:
     raw = (command.args or "").strip()
-    parsed = re.match(r"^(.*?)[\s\-_#]+(\d+)$", raw)
+    parsed = re.match(r"^(.*?)[\\s\\-_#]+(\\d+)$", raw)
     if not parsed:
-        await message.answer("Формат: <code>/nft scaredcat 1</code>")
+        await message.answer("Нужны название и номер, например: <code>/nft scaredcat 1</code>")
         return
     query = parsed.group(1)
     number = int(parsed.group(2))
     if number < 1 or number > MAX_NUMBER:
-        await message.answer("Номер вне диапазона.")
+        await message.answer("Такого номера не бывает.")
         return
     gift = await find_gift(query)
     if gift is None:
-        await message.answer("Подарок не найден.")
+        await message.answer("Не нашёл такой подарок.")
         return
     try:
         data = await get_nft(gift["slug"], number)
     except UpstreamError as error:
         if error.status == 404:
-            await message.answer("Экземпляр #" + str(number) + " не найден.")
+            await message.answer("Экземпляра #" + str(number) + " нет.")
         else:
-            await message.answer("Источник недоступен: " + escape(error.message))
+            await message.answer("Источник не отвечает: " + escape(error.message))
         return
     owner = data["owner"]
-    lines = [
-        "🖼 <b>" + escape(data["title"]) + "</b>",
-        "Номер: <b>#" + str(data["number"]) + "</b>",
-    ]
+    lines = ["<b>" + escape(data["title"]) + "</b>"]
     if data["issued"]:
-        lines.append("Выпущен: <b>" + escape(str(data["issued"])) + "</b>")
+        lines.append("Выпущен: " + escape(str(data["issued"])))
     if data["quantity"]:
-        lines.append("Тираж: <b>" + escape(str(data["quantity"])) + "</b>")
-    lines.append("Владелец: <b>" + escape(owner_display(owner)) + "</b>")
+        lines.append("Тираж: " + escape(str(data["quantity"])))
+    lines.append("Сейчас у: " + escape(owner_display(owner)))
     if data["model"]:
-        lines.append("Модель: <b>" + escape(str(data["model"])) + "</b>")
+        lines.append("Модель: " + escape(str(data["model"])))
     if data["backdrop"]:
-        lines.append("Фон: <b>" + escape(str(data["backdrop"])) + "</b>")
+        lines.append("Фон: " + escape(str(data["backdrop"])))
     if data["symbol"]:
-        lines.append("Узор: <b>" + escape(str(data["symbol"])) + "</b>")
-    lines.append("")
-    lines.append("<i>" + escape(CREDIT) + "</i>")
+        lines.append("Узор: " + escape(str(data["symbol"])))
     buttons: List[List[InlineKeyboardButton]] = []
     if owner.get("username"):
-        buttons.append([InlineKeyboardButton(text="👤 Профиль владельца", url="https://t.me/" + str(owner["username"]))])
+        buttons.append([InlineKeyboardButton(text="Профиль владельца", url="https://t.me/" + str(owner["username"]))])
     elif owner.get("userId"):
-        buttons.append([InlineKeyboardButton(text="👤 Профиль владельца", url="tg://user?id=" + str(owner["userId"]))])
-    buttons.append([InlineKeyboardButton(text="🔗 Открыть NFT", url=data["pageUrl"])])
+        buttons.append([InlineKeyboardButton(text="Профиль владельца", url="tg://user?id=" + str(owner["userId"]))])
+    buttons.append([InlineKeyboardButton(text="Страница на t.me", url=data["pageUrl"])])
     if webapp_available():
-        buttons.append([InlineKeyboardButton(text="🎁 Открыть каталог", web_app=WebAppInfo(url=webapp_link(data["slug"])))])
+        buttons.append([InlineKeyboardButton(text="Открыть каталог", web_app=WebAppInfo(url=webapp_link(data["slug"])))])
     await message.answer("\n".join(lines), reply_markup=InlineKeyboardMarkup(inline_keyboard=buttons))
 
 
@@ -606,7 +582,7 @@ async def on_text(message: Message) -> None:
     raw = (message.text or "").strip()
     if not raw:
         return
-    parsed = re.match(r"^(.*?)[\s\-_#]+(\d+)$", raw)
+    parsed = re.match(r"^(.*?)[\\s\\-_#]+(\\d+)$", raw)
     if parsed and to_slug(parsed.group(1)):
         await on_nft(message, CommandObject(command="nft", args=raw))
         return
@@ -614,508 +590,294 @@ async def on_text(message: Message) -> None:
 
 
 MINI_APP_HTML = r"""<!doctype html>
-<html lang="ru">
+<html lang='ru'>
 <head>
-<meta charset="utf-8" />
-<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
-<title>Подарки Telegram</title>
-<script src="https://telegram.org/js/telegram-web-app.js"></script>
+<meta charset='utf-8' />
+<meta name='viewport' content='width=device-width, initial-scale=1, viewport-fit=cover' />
+<title>Подарки</title>
+<script src='https://telegram.org/js/telegram-web-app.js'></script>
 <style>
 *,*::before,*::after{box-sizing:border-box}
 :root{
 --bg:var(--tg-theme-bg-color,#ffffff);
---surface:var(--tg-theme-secondary-bg-color,#f9f8f7);
---raised:#f0efed;
---text:var(--tg-theme-text-color,#2c2c2b);
---muted:var(--tg-theme-hint-color,#7d7a75);
---accent:var(--tg-theme-link-color,#2783de);
---accent-soft:#e5f2fc;
---border:#e6e5e3;
---good:#46a171;
---warn:#d5803b;
-}
-@media (prefers-color-scheme:dark){
-:root{
---bg:var(--tg-theme-bg-color,#191919);
---surface:var(--tg-theme-secondary-bg-color,#202020);
---raised:#383836;
---text:var(--tg-theme-text-color,#ffffff);
---muted:var(--tg-theme-hint-color,rgba(255,255,255,.65));
---accent:var(--tg-theme-link-color,#5e9fe8);
---accent-soft:rgba(94,159,232,.14);
---border:rgba(255,255,255,.2);
---good:#72bc8f;
---warn:#de9255;
-}
+--text:var(--tg-theme-text-color,#000000);
+--muted:var(--tg-theme-hint-color,#8b8b8b);
+--line:rgba(128,128,128,.22);
+--link:var(--tg-theme-link-color,#2481cc);
 }
 html,body{margin:0;padding:0}
-body{background:var(--bg);color:var(--text);font:16px/1.5 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;-webkit-font-smoothing:antialiased}
-button,input{font:inherit;color:inherit}
-.wrap{max-width:720px;margin:0 auto;padding:0 16px calc(32px + env(safe-area-inset-bottom))}
-.topbar{position:sticky;top:0;z-index:20;background:var(--bg);padding:16px 0 12px;border-bottom:1px solid var(--border)}
-.title{margin:0;font-size:22px;font-weight:600;letter-spacing:-.01em}
-.sub{margin-top:4px;color:var(--muted);font-size:14px}
-.search{margin-top:16px;position:relative}
-.search input{width:100%;min-height:44px;padding:10px 14px;border-radius:12px;border:1px solid var(--border);background:var(--surface);outline:none}
-.search input:focus{border-color:var(--accent)}
-.chips{display:flex;gap:8px;margin-top:12px;overflow-x:auto;-webkit-overflow-scrolling:touch;scrollbar-width:none}
-.chips::-webkit-scrollbar{display:none}
-.chip{flex:0 0 auto;min-height:40px;padding:8px 14px;border-radius:10px;border:1px solid var(--border);background:transparent;color:var(--muted);cursor:pointer;font-size:14px}
-.chip.on{background:var(--accent-soft);border-color:transparent;color:var(--accent);font-weight:600}
-.countline{margin-top:12px;color:var(--muted);font-size:14px}
-.list{display:grid;gap:8px;padding-top:16px}
-.card{display:flex;align-items:center;gap:8px;border:1px solid var(--border);border-radius:12px;background:var(--surface);overflow:hidden}
-.card-main{flex:1 1 auto;display:flex;align-items:center;gap:12px;min-height:76px;padding:12px;border:0;background:transparent;text-align:left;cursor:pointer}
-.thumb{flex:0 0 auto;width:56px;height:56px;border-radius:12px;background:var(--raised);display:flex;align-items:center;justify-content:center;overflow:hidden}
-.thumb img{width:52px;height:52px;object-fit:contain;display:block}
-.thumb-empty::after{content:"🎁";font-size:24px}
-.card-body{flex:1 1 auto;min-width:0;display:flex;flex-direction:column;gap:2px}
-.card-title{font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.card-meta{color:var(--muted);font-size:14px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.chev{flex:0 0 auto;color:var(--muted);font-size:22px;line-height:1}
-.fav{flex:0 0 auto;width:44px;height:44px;margin-right:8px;border:0;border-radius:10px;background:transparent;color:var(--muted);font-size:20px;cursor:pointer}
-.fav.on{color:var(--warn)}
-.skel{height:76px;border-radius:12px;border:1px solid var(--border);background:var(--surface)}
-.empty,.loading,.error,.notice{padding:24px 16px;text-align:center;color:var(--muted);font-size:14px;border:1px solid var(--border);border-radius:12px;background:var(--surface)}
-.error{color:#e56458}
-.notice{text-align:left}
-.hidden{display:none}
-.backrow{position:sticky;top:0;z-index:20;background:var(--bg);padding:12px 0;border-bottom:1px solid var(--border)}
-.back{min-height:44px;padding:8px 12px 8px 4px;border:0;background:transparent;color:var(--accent);font-size:16px;cursor:pointer}
-.hero{padding:24px 0 8px;text-align:center}
-.hero-art{width:128px;height:128px;margin:0 auto;border-radius:16px;background:var(--surface);border:1px solid var(--border);display:flex;align-items:center;justify-content:center;overflow:hidden}
-.hero-art img{width:112px;height:112px;object-fit:contain}
-.hero-title{margin:16px 0 4px;font-size:26px;font-weight:600;letter-spacing:-.02em}
-.hero-sub{color:var(--muted);font-size:14px}
-.badges{display:flex;flex-wrap:wrap;gap:8px;justify-content:center;margin-top:12px}
-.badge{padding:4px 10px;border-radius:8px;background:var(--surface);border:1px solid var(--border);color:var(--muted);font-size:13px}
-.badge.ok{background:var(--accent-soft);border-color:transparent;color:var(--accent)}
-.stats{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin-top:24px}
-.stat{padding:12px 8px;border:1px solid var(--border);border-radius:12px;background:var(--surface);text-align:center}
-.stat-num{font-size:20px;font-weight:600}
-.stat-label{margin-top:2px;color:var(--muted);font-size:14px}
-.block{margin-top:24px}
-.block-title{font-size:14px;font-weight:600;color:var(--muted);text-transform:uppercase;letter-spacing:.04em;margin-bottom:8px}
-.kvs{border:1px solid var(--border);border-radius:12px;background:var(--surface);overflow:hidden}
-.kv{display:flex;align-items:center;gap:12px;padding:12px;border-top:1px solid var(--border);width:100%;background:transparent;border-left:0;border-right:0;border-bottom:0;text-align:left}
-.kv:first-child{border-top:0}
-.k{flex:0 0 40%;color:var(--muted);font-size:14px}
-.v{flex:1 1 auto;min-width:0;font-size:15px;word-break:break-word}
-.kv.tap{cursor:pointer}
-.kv.tap .v{color:var(--accent);font-weight:600}
-.lookup{border:1px solid var(--border);border-radius:12px;background:var(--surface);padding:12px}
-.lookup-row{display:flex;gap:8px;margin-top:8px}
-.lookup-row input{flex:1 1 auto;min-width:0;min-height:44px;padding:10px 12px;border-radius:10px;border:1px solid var(--border);background:var(--bg);outline:none}
-.lookup-row input:focus{border-color:var(--accent)}
-.lab{color:var(--muted);font-size:14px}
-.btn{min-height:44px;padding:10px 16px;border-radius:10px;border:1px solid var(--border);background:var(--bg);color:var(--text);font-size:15px;font-weight:600;cursor:pointer;text-decoration:none;display:inline-flex;align-items:center;justify-content:center}
-.btn.primary{background:var(--accent);border-color:transparent;color:#fff}
-.btn.wide{width:100%}
-.actions{display:flex;flex-wrap:wrap;gap:8px;margin-top:12px}
-.nft{margin-top:12px;border:1px solid var(--border);border-radius:12px;background:var(--surface);padding:12px}
-.nft-art{width:100%;max-width:220px;margin:0 auto 12px;aspect-ratio:1/1;border-radius:12px;overflow:hidden;background:var(--raised);display:flex;align-items:center;justify-content:center}
-.nft-art img{width:100%;height:100%;object-fit:cover;display:block}
-.nft-title{font-size:18px;font-weight:600;margin-bottom:12px;text-align:center}
-.hint{margin-top:8px;color:var(--muted);font-size:14px}
-.credit{margin-top:32px;padding-top:16px;border-top:1px solid var(--border);color:var(--muted);font-size:14px;text-align:center}
-.credit a{color:var(--accent);text-decoration:none}
-@media (min-width:560px){
-.list{grid-template-columns:1fr 1fr}
-.stats{gap:12px}
-}
+body{background:var(--bg);color:var(--text);font:16px/1.45 -apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;-webkit-font-smoothing:antialiased}
+button,input{font:inherit;color:inherit;background:none;border:0;margin:0;padding:0}
+.wrap{max-width:620px;margin:0 auto;padding:0 20px calc(28px + env(safe-area-inset-bottom))}
+.bar{position:sticky;top:0;z-index:5;background:var(--bg);padding:14px 0 4px}
+#search{width:100%;padding:10px 0;border-bottom:1px solid var(--line);outline:none}
+#search::placeholder{color:var(--muted)}
+#count{padding:12px 0;color:var(--muted);font-size:13px}
+.row{display:flex;align-items:center;gap:14px;width:100%;padding:11px 0;border-top:1px solid var(--line);text-align:left;cursor:pointer}
+.row img{flex:0 0 auto;width:44px;height:44px;object-fit:contain}
+.row span{min-width:0;overflow:hidden;white-space:nowrap;text-overflow:ellipsis}
+.hide{display:none}
+.back{padding:14px 0;color:var(--muted);font-size:14px;cursor:pointer}
+.hero{display:flex;flex-direction:column;align-items:center;gap:8px;padding:4px 0 20px}
+.hero img{width:176px;height:176px;object-fit:contain}
+.hero h1{margin:0;font-size:20px;font-weight:600;text-align:center}
+.hero p{margin:0;color:var(--muted);font-size:13px}
+.kv{display:flex;justify-content:space-between;gap:16px;padding:10px 0;border-top:1px solid var(--line);font-size:15px}
+.kv b{font-weight:400;color:var(--muted)}
+.kv span{min-width:0;text-align:right;overflow-wrap:anywhere}
+.ask{padding:22px 0 0}
+.ask p{margin:0 0 6px;color:var(--muted);font-size:13px}
+.ask div{display:flex;align-items:center;gap:14px}
+.ask input{flex:1 1 auto;padding:10px 0;border-bottom:1px solid var(--line);outline:none}
+.ask button{flex:0 0 auto;color:var(--link);cursor:pointer}
+.msg{padding:14px 0 0;color:var(--muted);font-size:14px}
+a{color:var(--link);text-decoration:none}
+.foot{padding:26px 0 0;color:var(--muted);font-size:12px}
 </style>
 </head>
 <body>
-<div class="wrap">
-<div id="listScreen">
-<header class="topbar">
-<h1 class="title">Подарки Telegram</h1>
-<div class="sub" id="summary">загрузка каталога…</div>
-<div class="search"><input id="search" type="search" placeholder="Поиск: plush pepe, ID, scaredcat" autocomplete="off" /></div>
-<div class="chips" id="filters">
-<button class="chip on" type="button" data-filter="all">Все</button>
-<button class="chip" type="button" data-filter="fav">★ Избранные</button>
-<button class="chip" type="button" data-filter="nft">С NFT</button>
+<div class='wrap'>
+<div id='listScreen'>
+<div class='bar'><input id='search' type='search' placeholder='Поиск' autocomplete='off' spellcheck='false' /></div>
+<div id='count'>Загружаю…</div>
+<div id='list'></div>
+<div class='foot'>Данные: api.changes.tg (@GiftChanges)</div>
 </div>
-<div class="chips" id="sorts">
-<button class="chip on" type="button" data-sort="catalog">По каталогу</button>
-<button class="chip" type="button" data-sort="name">А-Я</button>
-<button class="chip" type="button" data-sort="new">Новые</button>
+<div id='detailScreen' class='hide'>
+<div class='back' id='back'>← Назад</div>
+<div id='detail'></div>
 </div>
-<div class="countline" id="countline">&nbsp;</div>
-</header>
-<main class="list" id="list">
-<div class="skel"></div><div class="skel"></div><div class="skel"></div><div class="skel"></div>
-</main>
-</div>
-<section id="detailScreen" class="hidden">
-<div class="backrow"><button class="back" id="backBtn" type="button">‹ Назад к списку</button></div>
-<div id="detail"></div>
-</section>
-<footer class="credit">Powered by <a href="https://t.me/GiftChanges" target="_blank" rel="noopener">@GiftChanges</a> · api.changes.tg<br />Владельцы и тиражи — t.me/nft</footer>
 </div>
 <script>
-var tg = (window.Telegram && window.Telegram.WebApp) ? window.Telegram.WebApp : null;
-var state = {gifts:[], totals:null, filter:"all", sort:"catalog", query:"", gift:null, favs:{}};
+const tg = window.Telegram && window.Telegram.WebApp ? window.Telegram.WebApp : null;
+const listScreen = document.getElementById('listScreen');
+const detailScreen = document.getElementById('detailScreen');
+const listEl = document.getElementById('list');
+const countEl = document.getElementById('count');
+const searchEl = document.getElementById('search');
+const detailEl = document.getElementById('detail');
+const backEl = document.getElementById('back');
+let gifts = [];
+let current = null;
 
-function esc(value){
-  return String(value === null || value === undefined ? "" : value).replace(/[&<>"']/g, function(ch){
-    return {"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[ch];
-  });
+function el(tag, cls, text) {
+  const node = document.createElement(tag);
+  if (cls) node.className = cls;
+  if (text !== undefined && text !== null) node.textContent = String(text);
+  return node;
 }
 
-function num(value){
-  var parsed = Number(value);
-  if (!isFinite(parsed)) { return String(value); }
-  return parsed.toLocaleString("ru-RU");
-}
-
-function haptic(kind){
-  try {
-    if (tg && tg.HapticFeedback) {
-      if (kind === "select") { tg.HapticFeedback.selectionChanged(); }
-      else { tg.HapticFeedback.impactOccurred("light"); }
-    }
-  } catch (err) {}
-}
-
-function loadFavs(){
-  try {
-    var raw = window.localStorage.getItem("gc_favs");
-    if (raw) { state.favs = JSON.parse(raw) || {}; }
-  } catch (err) { state.favs = {}; }
-}
-
-function saveFavs(){
-  try { window.localStorage.setItem("gc_favs", JSON.stringify(state.favs)); } catch (err) {}
-}
-
-async function api(path){
-  var response = await fetch(path, {headers:{"Accept":"application/json"}});
-  var data = null;
-  try { data = await response.json(); } catch (err) { data = null; }
-  if (!response.ok || !data) {
-    throw new Error(data && data.error ? data.error : "источник недоступен");
-  }
-  return data;
-}
-
-function openLink(url){
-  if (!url) { return; }
-  haptic("tap");
-  if (tg && url.indexOf("https://t.me/") === 0) { tg.openTelegramLink(url); return; }
-  if (url.indexOf("tg://") === 0) { window.location.href = url; return; }
-  if (tg && tg.openLink) { tg.openLink(url); return; }
-  window.open(url, "_blank");
-}
-
-function visibleGifts(){
-  var query = state.query.trim().toLowerCase();
-  var slugQuery = query.replace(/[^a-z0-9]/g, "");
-  var items = state.gifts.filter(function(gift){
-    if (state.filter === "fav" && !state.favs[gift.slug]) { return false; }
-    if (state.filter === "nft" && !gift.upgradable) { return false; }
-    if (!query) { return true; }
-    if (gift.name.toLowerCase().indexOf(query) >= 0) { return true; }
-    if (slugQuery && gift.slug.indexOf(slugQuery) >= 0) { return true; }
-    return gift.id.indexOf(query) >= 0;
-  });
-  if (state.sort === "name") {
-    items = items.slice().sort(function(a, b){ return a.name.localeCompare(b.name, "ru"); });
-  } else if (state.sort === "new") {
-    items = items.slice().sort(function(a, b){
-      if (a.id.length !== b.id.length) { return b.id.length - a.id.length; }
-      return b.id.localeCompare(a.id);
-    });
-  } else {
-    items = items.slice().sort(function(a, b){ return a.order - b.order; });
-  }
-  return items;
-}
-
-function toggleFav(slug){
-  if (state.favs[slug]) { delete state.favs[slug]; } else { state.favs[slug] = 1; }
-  saveFavs();
-  haptic("select");
-  renderList();
-}
-
-function giftCard(gift){
-  var row = document.createElement("div");
-  row.className = "card";
-
-  var main = document.createElement("button");
-  main.type = "button";
-  main.className = "card-main";
-
-  var thumb = document.createElement("span");
-  thumb.className = "thumb";
-  var image = document.createElement("img");
-  image.src = gift.icon;
-  image.alt = "";
-  image.loading = "lazy";
-  image.decoding = "async";
-  image.addEventListener("error", function(){
-    image.remove();
-    thumb.classList.add("thumb-empty");
-  });
-  thumb.appendChild(image);
-
-  var body = document.createElement("span");
-  body.className = "card-body";
-  var title = document.createElement("span");
-  title.className = "card-title";
-  title.textContent = gift.name;
-  var meta = document.createElement("span");
-  meta.className = "card-meta";
-  meta.textContent = (gift.upgradable ? "есть NFT" : "без NFT") + " · ID " + gift.id;
-  body.appendChild(title);
-  body.appendChild(meta);
-
-  var chevron = document.createElement("span");
-  chevron.className = "chev";
-  chevron.textContent = "›";
-
-  main.appendChild(thumb);
-  main.appendChild(body);
-  main.appendChild(chevron);
-  main.addEventListener("click", function(){ openGift(gift.slug); });
-
-  var fav = document.createElement("button");
-  fav.type = "button";
-  fav.className = "fav" + (state.favs[gift.slug] ? " on" : "");
-  fav.textContent = state.favs[gift.slug] ? "★" : "☆";
-  fav.setAttribute("aria-label", "Избранное");
-  fav.addEventListener("click", function(event){
-    event.stopPropagation();
-    toggleFav(gift.slug);
-  });
-
-  row.appendChild(main);
-  row.appendChild(fav);
+function kv(label, value) {
+  const row = el('div', 'kv');
+  row.appendChild(el('b', null, label));
+  row.appendChild(el('span', null, value));
   return row;
 }
 
-function renderSummary(){
-  var totals = state.totals || {};
-  var gifts = totals.gifts || {};
-  var parts = [];
-  if (gifts.total) { parts.push(num(gifts.total) + " подарков"); }
-  if (totals.models) { parts.push(num(totals.models) + " моделей"); }
-  if (totals.backdrops) { parts.push(num(totals.backdrops) + " фонов"); }
-  document.getElementById("summary").textContent = parts.length ? parts.join(" · ") : "каталог загружен";
+function slugify(value) {
+  return String(value || '').toLowerCase().replace(/[^a-z0-9]+/g, '');
 }
 
-function renderList(){
-  var host = document.getElementById("list");
-  var items = visibleGifts();
-  document.getElementById("countline").textContent = "Показано " + items.length + " из " + state.gifts.length;
-  host.innerHTML = "";
-  if (!items.length) {
-    host.innerHTML = '<div class="empty">Ничего не найдено</div>';
-    return;
-  }
-  var frag = document.createDocumentFragment();
-  items.forEach(function(gift){ frag.appendChild(giftCard(gift)); });
-  host.appendChild(frag);
+function plural(n, one, few, many) {
+  const d = n % 10;
+  const h = n % 100;
+  if (d === 1 && h !== 11) return one;
+  if (d >= 2 && d <= 4 && (h < 10 || h >= 20)) return few;
+  return many;
 }
 
-function showScreen(name){
-  document.getElementById("listScreen").classList.toggle("hidden", name !== "list");
-  document.getElementById("detailScreen").classList.toggle("hidden", name !== "detail");
-  try {
-    if (tg && tg.BackButton) {
-      if (name === "detail") { tg.BackButton.show(); } else { tg.BackButton.hide(); }
-    }
-  } catch (err) {}
+function openList() {
+  current = null;
+  detailScreen.classList.add('hide');
+  listScreen.classList.remove('hide');
+  if (tg && tg.BackButton) tg.BackButton.hide();
   window.scrollTo(0, 0);
 }
 
-function kvRow(label, value){
-  return '<div class="kv"><span class="k">' + esc(label) + '</span><span class="v">' + esc(value) + '</span></div>';
+function openDetailScreen() {
+  listScreen.classList.add('hide');
+  detailScreen.classList.remove('hide');
+  if (tg && tg.BackButton) tg.BackButton.show();
+  window.scrollTo(0, 0);
 }
 
-function renderDetail(data){
-  var host = document.getElementById("detail");
-  var counts = data.counts || {};
-  var rarest = data.rarest || {};
-  var rarestRows = "";
-  if (rarest.model) { rarestRows += kvRow("Модель", rarest.model); }
-  if (rarest.backdrop) { rarestRows += kvRow("Фон", rarest.backdrop); }
-  if (rarest.symbol) { rarestRows += kvRow("Узор", rarest.symbol); }
-  var metaRows = kvRow("Gift ID", data.id);
-  if (data.customEmojiId) { metaRows += kvRow("Custom emoji ID", data.customEmojiId); }
-  metaRows += kvRow("Слаг", data.slug);
-
-  host.innerHTML =
-    '<div class="hero">' +
-      '<div class="hero-art"><img id="heroImg" src="' + esc(data.iconLarge) + '" alt="" /></div>' +
-      '<h2 class="hero-title">' + esc(data.name) + '</h2>' +
-      '<div class="hero-sub">непрокачанный оригинал подарка</div>' +
-      '<div class="badges">' +
-        '<span class="badge' + (data.upgradable ? ' ok' : '') + '">' + (data.upgradable ? 'NFT-версия есть' : 'NFT-версии нет') + '</span>' +
-        '<span class="badge">' + esc(data.slug) + '</span>' +
-      '</div>' +
-    '</div>' +
-    '<div class="stats">' +
-      '<div class="stat"><div class="stat-num">' + esc(counts.models || 0) + '</div><div class="stat-label">модели</div></div>' +
-      '<div class="stat"><div class="stat-num">' + esc(counts.backdrops || 0) + '</div><div class="stat-label">фоны</div></div>' +
-      '<div class="stat"><div class="stat-num">' + esc(counts.symbols || 0) + '</div><div class="stat-label">узоры</div></div>' +
-    '</div>' +
-    (rarestRows ? '<section class="block"><div class="block-title">Редчайшие атрибуты</div><div class="kvs">' + rarestRows + '</div></section>' : '') +
-    '<section class="block">' +
-      '<div class="block-title">Коллекционный экземпляр</div>' +
-      '<div class="lookup">' +
-        '<div class="lab">Номер экземпляра</div>' +
-        '<div class="lookup-row">' +
-          '<input id="numInput" type="text" inputmode="numeric" value="1" />' +
-          '<button class="btn primary" type="button" id="numBtn">Показать</button>' +
-        '</div>' +
-        '<div class="hint">Дата, тираж и владелец берутся со страницы коллекционного в Telegram.</div>' +
-      '</div>' +
-      '<div id="nftBox"></div>' +
-    '</section>' +
-    '<section class="block"><div class="block-title">Данные подарка</div><div class="kvs">' + metaRows + '</div></section>' +
-    '<section class="block"><a class="btn wide" id="stickerBtn" href="' + esc(data.sticker) + '" target="_blank" rel="noopener">Скачать оригинальный стикер (.tgs)</a></section>';
-
-  var heroImg = document.getElementById("heroImg");
-  if (heroImg) {
-    heroImg.addEventListener("error", function(){
-      heroImg.remove();
-      var art = document.querySelector(".hero-art");
-      if (art) { art.classList.add("thumb-empty"); }
-    });
-  }
-  var input = document.getElementById("numInput");
-  var button = document.getElementById("numBtn");
-  function runLookup(){
-    var raw = (input.value || "").replace(/[^0-9]/g, "");
-    if (!raw) { raw = "1"; }
-    input.value = raw;
-    lookupNft(data.slug, raw);
-  }
-  button.addEventListener("click", runLookup);
-  input.addEventListener("keydown", function(event){
-    if (event.key === "Enter") { event.preventDefault(); runLookup(); }
-  });
-}
-
-function renderNft(box, data){
-  var owner = data.owner || {};
-  var ownerText = owner.username ? ("@" + owner.username) : (owner.userId ? ("ID " + owner.userId) : (owner.name || "скрыт"));
-  var ownerExtra = (owner.name && (owner.username || owner.userId)) ? (owner.name + " · " + ownerText) : ownerText;
-  var rows = kvRow("Номер", "#" + data.number);
-  rows += kvRow("Дата выпуска", data.issued || "нет данных");
-  if (data.quantity) { rows += kvRow("Тираж", data.quantity); }
-  if (owner.link) {
-    rows += '<button class="kv tap" type="button" id="ownerRow"><span class="k">Владелец</span><span class="v">' + esc(ownerExtra) + ' ›</span></button>';
+function renderList() {
+  const raw = searchEl.value.trim();
+  const needle = raw.toLowerCase();
+  const slugNeedle = slugify(raw);
+  const items = raw
+    ? gifts.filter(function (gift) {
+        return gift.name.toLowerCase().indexOf(needle) >= 0 || (slugNeedle && gift.slug.indexOf(slugNeedle) >= 0);
+      })
+    : gifts;
+  if (!gifts.length) {
+    countEl.textContent = '';
+  } else if (!items.length) {
+    countEl.textContent = 'Ничего не нашлось';
   } else {
-    rows += kvRow("Владелец", ownerExtra);
+    countEl.textContent = items.length + ' ' + plural(items.length, 'подарок', 'подарка', 'подарков');
   }
-  if (data.model) { rows += kvRow("Модель", data.model); }
-  if (data.backdrop) { rows += kvRow("Фон", data.backdrop); }
-  if (data.symbol) { rows += kvRow("Узор", data.symbol); }
-
-  box.innerHTML =
-    '<div class="nft">' +
-      '<div class="nft-art"><img id="nftImg" src="' + esc(data.image) + '" alt="" /></div>' +
-      '<div class="nft-title">' + esc(data.title) + '</div>' +
-      '<div class="kvs">' + rows + '</div>' +
-      '<div class="actions">' +
-        (owner.link ? '<button class="btn primary" type="button" id="ownerBtn">Профиль владельца</button>' : '') +
-        '<button class="btn" type="button" id="nftBtn">Открыть в Telegram</button>' +
-      '</div>' +
-    '</div>';
-
-  var nftImg = document.getElementById("nftImg");
-  if (nftImg) {
-    nftImg.addEventListener("error", function(){
-      var art = nftImg.parentNode;
-      nftImg.remove();
-      if (art) { art.classList.add("thumb-empty"); }
-    });
-  }
-  var ownerRow = document.getElementById("ownerRow");
-  if (ownerRow) { ownerRow.addEventListener("click", function(){ openLink(owner.link); }); }
-  var ownerBtn = document.getElementById("ownerBtn");
-  if (ownerBtn) { ownerBtn.addEventListener("click", function(){ openLink(owner.link); }); }
-  var nftBtn = document.getElementById("nftBtn");
-  if (nftBtn) { nftBtn.addEventListener("click", function(){ openLink(data.pageUrl); }); }
+  const frag = document.createDocumentFragment();
+  items.forEach(function (gift) {
+    const row = el('button', 'row');
+    row.type = 'button';
+    row.dataset.slug = gift.slug;
+    const img = el('img');
+    img.src = gift.icon;
+    img.alt = '';
+    img.loading = 'lazy';
+    row.appendChild(img);
+    row.appendChild(el('span', null, gift.name));
+    frag.appendChild(row);
+  });
+  listEl.textContent = '';
+  listEl.appendChild(frag);
 }
 
-async function lookupNft(slug, number){
-  var box = document.getElementById("nftBox");
-  if (!box) { return; }
-  box.innerHTML = '<div class="loading">Ищем экземпляр #' + esc(number) + '…</div>';
-  try {
-    var data = await api("api/nft/" + encodeURIComponent(slug) + "/" + encodeURIComponent(number));
-    renderNft(box, data);
-  } catch (err) {
-    box.innerHTML = '<div class="notice">Экземпляр #' + esc(number) + ' не найден. У подарка может не быть NFT-версии, либо номер больше тиража.</div>';
-  }
+function renderDetail(gift) {
+  detailEl.textContent = '';
+  const hero = el('div', 'hero');
+  const img = el('img');
+  img.src = gift.iconLarge || gift.icon;
+  img.alt = '';
+  hero.appendChild(img);
+  hero.appendChild(el('h1', null, gift.name));
+  hero.appendChild(el('p', null, 'обычный вид, без прокачки'));
+  detailEl.appendChild(hero);
+  detailEl.appendChild(kv('ID', gift.id));
+  const ask = el('div', 'ask');
+  ask.appendChild(el('p', null, 'Знаешь номер экземпляра? Покажу, когда его выпустили и у кого он сейчас.'));
+  const line = el('div');
+  const input = el('input');
+  input.id = 'num';
+  input.type = 'number';
+  input.min = '1';
+  input.inputMode = 'numeric';
+  input.placeholder = 'Номер';
+  const button = el('button', null, 'Найти');
+  button.type = 'button';
+  line.appendChild(input);
+  line.appendChild(button);
+  ask.appendChild(line);
+  detailEl.appendChild(ask);
+  const box = el('div', 'msg');
+  detailEl.appendChild(box);
+  detailEl.appendChild(el('div', 'foot', 'Данные: api.changes.tg (@GiftChanges)'));
+  button.addEventListener('click', function () {
+    lookupNumber(input.value, box);
+  });
+  input.addEventListener('keydown', function (event) {
+    if (event.key === 'Enter') lookupNumber(input.value, box);
+  });
 }
 
-async function openGift(slug){
-  haptic("select");
-  showScreen("detail");
-  var host = document.getElementById("detail");
-  host.innerHTML = '<div class="loading">Загружаем карточку…</div>';
+async function openGift(slug) {
+  openDetailScreen();
+  detailEl.textContent = '';
+  detailEl.appendChild(el('div', 'msg', 'Открываю…'));
   try {
-    var data = await api("api/gift/" + encodeURIComponent(slug));
-    state.gift = data;
+    const response = await fetch('/api/gift/' + encodeURIComponent(slug));
+    const data = await response.json();
+    if (!response.ok) throw new Error('fail');
+    current = data;
     renderDetail(data);
-    lookupNft(data.slug, 1);
-  } catch (err) {
-    host.innerHTML = '<div class="error">Не удалось открыть подарок: ' + esc(err.message) + '</div>';
+  } catch (error) {
+    detailEl.textContent = '';
+    detailEl.appendChild(el('div', 'msg', 'Не получилось загрузить. Попробуй ещё раз.'));
   }
 }
 
-function bindChips(hostId, key){
-  var host = document.getElementById(hostId);
-  host.addEventListener("click", function(event){
-    var chip = event.target.closest(".chip");
-    if (!chip) { return; }
-    var buttons = host.querySelectorAll(".chip");
-    for (var i = 0; i < buttons.length; i += 1) { buttons[i].classList.remove("on"); }
-    chip.classList.add("on");
-    state[key] = chip.getAttribute(key === "filter" ? "data-filter" : "data-sort");
-    haptic("select");
-    renderList();
-  });
-}
-
-async function init(){
-  if (tg) {
-    try { tg.ready(); tg.expand(); } catch (err) {}
-    try {
-      if (tg.BackButton) { tg.BackButton.onClick(function(){ showScreen("list"); }); }
-    } catch (err) {}
+async function lookupNumber(value, box) {
+  if (!current) return;
+  const number = parseInt(String(value).replace(/[^0-9]+/g, ''), 10);
+  if (!number || number < 1) {
+    box.className = 'msg';
+    box.textContent = 'Введи номер цифрами.';
+    return;
   }
-  loadFavs();
-  document.getElementById("backBtn").addEventListener("click", function(){ showScreen("list"); });
-  document.getElementById("search").addEventListener("input", function(event){
-    state.query = event.target.value || "";
-    renderList();
-  });
-  bindChips("filters", "filter");
-  bindChips("sorts", "sort");
+  box.className = 'msg';
+  box.textContent = 'Смотрю…';
   try {
-    var data = await api("api/catalog");
-    state.gifts = data.gifts || [];
-    state.totals = data.totals || null;
-    renderSummary();
-    renderList();
-  } catch (err) {
-    document.getElementById("list").innerHTML = '<div class="error">Каталог недоступен: ' + esc(err.message) + '</div>';
-    document.getElementById("summary").textContent = "ошибка загрузки";
+    const response = await fetch('/api/nft/' + encodeURIComponent(current.slug) + '/' + number);
+    const data = await response.json();
+    if (!response.ok) throw new Error('fail');
+    box.className = '';
+    box.textContent = '';
+    box.appendChild(kv('Номер', '#' + data.number));
+    if (data.issued) box.appendChild(kv('Выпущен', data.issued));
+    if (data.quantity) box.appendChild(kv('Тираж', data.quantity));
+    const owner = data.owner || {};
+    const label = owner.username ? '@' + owner.username : owner.name || (owner.userId ? 'ID ' + owner.userId : 'скрыт');
+    const link = owner.link || (owner.username ? 'https://t.me/' + owner.username : owner.userId ? 'tg://user?id=' + owner.userId : '');
+    const row = el('div', 'kv');
+    row.appendChild(el('b', null, 'Сейчас у'));
+    const cell = el('span');
+    if (link) {
+      const anchor = el('a', null, label);
+      anchor.href = link;
+      anchor.addEventListener('click', function (event) {
+        event.preventDefault();
+        if (tg && tg.openTelegramLink && link.indexOf('https://t.me/') === 0) tg.openTelegramLink(link);
+        else window.open(link, '_blank');
+      });
+      cell.appendChild(anchor);
+    } else {
+      cell.textContent = label;
+    }
+    row.appendChild(cell);
+    box.appendChild(row);
+    if (data.model) box.appendChild(kv('Модель', data.model));
+    if (data.backdrop) box.appendChild(kv('Фон', data.backdrop));
+    if (data.symbol) box.appendChild(kv('Узор', data.symbol));
+  } catch (error) {
+    box.className = 'msg';
+    box.textContent = 'Такого экземпляра нет или Telegram его не отдал.';
   }
-  var deep = "";
-  try { deep = new URLSearchParams(window.location.search).get("gift") || ""; } catch (err) { deep = ""; }
-  if (!deep && tg && tg.initDataUnsafe && tg.initDataUnsafe.start_param) { deep = tg.initDataUnsafe.start_param; }
-  if (deep) { openGift(String(deep).toLowerCase().replace(/[^a-z0-9]/g, "")); }
 }
 
-document.addEventListener("DOMContentLoaded", init);
+listEl.addEventListener('click', function (event) {
+  const row = event.target.closest('.row');
+  if (!row) return;
+  if (tg && tg.HapticFeedback) tg.HapticFeedback.selectionChanged();
+  openGift(row.dataset.slug);
+});
+
+backEl.addEventListener('click', openList);
+searchEl.addEventListener('input', renderList);
+
+async function boot() {
+  if (tg) {
+    tg.ready();
+    tg.expand();
+    if (tg.BackButton) tg.BackButton.onClick(openList);
+  }
+  try {
+    const response = await fetch('/api/catalog');
+    const data = await response.json();
+    if (!response.ok) throw new Error('fail');
+    gifts = (data.gifts || []).slice().sort(function (a, b) {
+      return String(a.name).localeCompare(String(b.name), 'ru');
+    });
+    renderList();
+  } catch (error) {
+    countEl.textContent = '';
+    listEl.textContent = '';
+    listEl.appendChild(el('div', 'msg', 'Каталог не загрузился. Закрой и открой приложение заново.'));
+    return;
+  }
+  const params = new URLSearchParams(window.location.search);
+  let target = params.get('gift') || '';
+  if (!target && tg && tg.initDataUnsafe && tg.initDataUnsafe.start_param) target = tg.initDataUnsafe.start_param;
+  if (target) {
+    const needle = slugify(target);
+    const found = gifts.filter(function (gift) {
+      return gift.slug === needle || gift.id === target;
+    })[0];
+    if (found) openGift(found.slug);
+  }
+}
+
+boot();
 </script>
 </body>
 </html>
